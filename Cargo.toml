@@ -1,0 +1,64 @@
+[package]
+name = "jj-commit-cloud-poc"
+version = "0.1.0"
+edition = "2024"
+autotests = false
+
+[[bin]]
+name = "jj"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-bisector"
+path = "src/bin/fake-bisector.rs"
+
+[[bin]]
+name = "fake-diff-editor"
+path = "src/bin/fake-diff-editor.rs"
+
+[[bin]]
+name = "fake-echo"
+path = "src/bin/fake-echo.rs"
+
+[[bin]]
+name = "fake-editor"
+path = "src/bin/fake-editor.rs"
+
+[[bin]]
+name = "fake-formatter"
+path = "src/bin/fake-formatter.rs"
+
+[[test]]
+name = "runner"
+path = "tests/runner.rs"
+
+[dependencies]
+jj-lib = { git = "https://github.com/jj-vcs/jj.git", branch = "main" }
+jj-cli = { git = "https://github.com/jj-vcs/jj.git", branch = "main" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+async-trait = "0.1.89"
+futures = "0.3.32"
+prost = "0.14.3"
+thiserror = "2.0.17"
+tracing = "0.1.44"
+clap = { version = "4.6.1", features = ["derive", "deprecated", "wrap_help", "string"] }
+dunce = "1.0.5"
+blake2 = "0.10.6"
+pollster = "0.4.0"
+rand = "0.10.1"
+itertools = "0.14.0"
+bstr = "1.12.1"
+tempfile = "3.27.0"
+nix = "0.31.3"
+smallvec = "1.13.5"
+
+[dev-dependencies]
+insta = { version = "1.47.2", features = ["filters"] }
+tokio = { version = "1.52.3", features = ["full"] }
+testutils = { git = "https://github.com/jj-vcs/jj.git", branch = "main" }
+indoc = "2.0.7"
+regex = "1.12.3"
+assert_cmd = "2.2.2"
+chrono = "0.4.44"
+serde_json = "1.0.150"
+toml_edit = "0.25.12"
