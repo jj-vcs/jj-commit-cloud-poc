@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap::{FromArgMatches, Subcommand};
+use clap::Subcommand;
 use jj_cli::cli_util::{CliRunner, CommandHelper};
+
 use jj_cli::command_error::CommandError;
 use jj_cli::ui::Ui;
 use jj_lib::repo::StoreFactories;
+use jj_commit_cloud_lib::local_backend::SqliteBackend;
+use jj_commit_cloud_lib::local_op_store::{SqliteOpHeadsStore, SqliteOpStore};
 
 mod init_sqlite;
 
@@ -32,7 +35,27 @@ enum SqliteCommand {
 }
 
 fn create_store_factories() -> StoreFactories {
-    StoreFactories::empty()
+    let mut store_factories = StoreFactories::empty();
+    store_factories.add_backend(
+        "sqlite",
+        Box::new(|_settings, store_path| {
+            let backend = SqliteBackend::load(store_path)?;
+            Ok(Box::new(backend))
+        }),
+    );
+    store_factories.add_op_store(
+        "sqlite",
+        Box::new(|_settings, store_path, root_data| {
+            Ok(Box::new(SqliteOpStore::load(store_path, root_data)?))
+        }),
+    );
+    store_factories.add_op_heads_store(
+        "sqlite",
+        Box::new(|_settings, store_path| {
+            Ok(Box::new(SqliteOpHeadsStore::load(store_path)?))
+        }),
+    );
+    store_factories
 }
 
 async fn run_custom_command(

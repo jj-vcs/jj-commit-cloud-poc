@@ -12,10 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::path::Path;
+use std::sync::Arc;
 use clap::Args;
 use jj_cli::cli_util::CommandHelper;
 use jj_cli::command_error::{cli_error, user_error_with_message, CommandError};
 use jj_cli::ui::Ui;
+use jj_commit_cloud_lib::local_backend::SqliteBackend;
+use jj_commit_cloud_lib::local_op_store::{SqliteOpHeadsStore, SqliteOpStore};
+use jj_lib::repo::{BackendInitializer, OpHeadsStoreInitializer, OpStoreInitializer, ReadonlyRepo};
+use jj_lib::ref_name::WorkspaceName;
+use jj_lib::signing::Signer;
+use jj_lib::workspace::{default_working_copy_factory, Workspace, WorkspaceInitError};
 
 #[derive(Args, Clone, Debug)]
 pub(crate) struct DebugInitSqliteArgs {
@@ -23,8 +31,36 @@ pub(crate) struct DebugInitSqliteArgs {
     pub destination: String,
 }
 
+async fn init_sqlite(
+    user_settings: &jj_lib::settings::UserSettings,
+    workspace_root: &Path,
+) -> Result<(Workspace, Arc<ReadonlyRepo>), WorkspaceInitError> {
+    let backend_initializer: &BackendInitializer = &|_settings, store_path| {
+        let backend = SqliteBackend::init(store_path)?;
+        Ok(Box::new(backend))
+    };
+    let op_store_initializer: &OpStoreInitializer =
+        &|_settings, store_path, root_data| Ok(Box::new(SqliteOpStore::init(store_path, root_data)?));
+    let op_heads_store_initializer: &OpHeadsStoreInitializer =
+        &|_settings, store_path, root_op_id| Ok(Box::new(SqliteOpHeadsStore::init(store_path, root_op_id)?));
+    let signer = Signer::from_settings(user_settings)?;
+    Workspace::init_with_factories(
+        user_settings,
+        workspace_root,
+        backend_initializer,
+        signer,
+        op_store_initializer,
+        op_heads_store_initializer,
+        ReadonlyRepo::default_index_store_initializer(),
+        ReadonlyRepo::default_submodule_store_initializer(),
+        &*default_working_copy_factory(),
+        WorkspaceName::DEFAULT.to_owned(),
+    )
+    .await
+}
+
 pub(crate) async fn cmd_debug_init_sqlite(
-    _ui: &mut Ui,
+    ui: &mut Ui,
     command: &CommandHelper,
     args: &DebugInitSqliteArgs,
 ) -> Result<(), CommandError> {
@@ -39,9 +75,21 @@ pub(crate) async fn cmd_debug_init_sqlite(
     }
     let cwd = command.cwd();
     let wc_path = cwd.join(&args.destination);
-    let _wc_path = jj_lib::file_util::create_or_reuse_dir(&wc_path)
+    let wc_path = jj_lib::file_util::create_or_reuse_dir(&wc_path)
         .and_then(|_| dunce::canonicalize(wc_path))
         .map_err(|e| user_error_with_message("Failed to create workspace", e))?;
 
-    todo!("init_sqlite: implement SQLite repository initialization")
+    init_sqlite(
+        &command.settings_for_new_workspace(ui, &wc_path)?.0,
+        &wc_path,
+    )
+    .await?;
+
+    let relative_wc_path = jj_lib::file_util::relative_path(cwd, &wc_path);
+    writeln!(
+        ui.status(),
+        "Initialized repo in \"{}\"",
+        relative_wc_path.display()
+    )?;
+    Ok(())
 }
