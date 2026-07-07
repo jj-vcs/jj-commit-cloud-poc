@@ -1,0 +1,11 @@
+[package]
+name = "jj-commit-cloud-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+jj-lib = { git = "https://github.com/jj-vcs/jj.git", tag = "v0.43.0" }
+async-trait = "0.1.80"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+thiserror = "1.0.61"
+tracing = "0.1.40"
