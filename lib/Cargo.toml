@@ -5,9 +5,23 @@ edition = "2024"
 
 [dependencies]
 jj-lib = { git = "https://github.com/jj-vcs/jj.git", tag = "v0.43.0" }
-async-trait = "0.1.80"
-rusqlite = { version = "0.32.1", features = ["bundled"] }
-thiserror = "1.0.61"
-tracing = "0.1.40"
-futures = "0.3.30"
+
+rusqlite = { version = "0.32", features = ["bundled"] }
+async-trait = "0.1.89"
+futures = "0.3.32"
+prost = "0.14.3"
+thiserror = "2.0.17"
+tracing = "0.1.44"
+blake2 = "0.10.6"
+rand = "0.10.1"
+itertools = "0.14.0"
+bstr = "1.12.1"
+smallvec = "1.13.5"
+pollster = "0.4.0"
+
+[dev-dependencies]
+testutils = { git = "https://github.com/jj-vcs/jj.git", branch = "main" }
+tempfile = "3.27.0"
+tokio = { version = "1.52.3", features = ["full"] }
+
 
