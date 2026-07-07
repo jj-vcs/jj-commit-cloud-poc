@@ -17,7 +17,6 @@ use assert_cmd::Command;
 use tempfile::tempdir;
 
 #[test]
-#[should_panic(expected = "SqliteOpStore::init not implemented")]
 fn test_sqlite_backend_basics() {
     let temp_dir = tempdir().unwrap();
     // 1. Initialize the SQLite repository (triggers cli init stub)
@@ -39,21 +38,21 @@ fn test_sqlite_backend_basics() {
         .assert()
         .success();
 
-    // 3. Create a commit
+    // 3. Create a commit (triggers backend write_file, write_tree, write_commit)
     let mut cmd = Command::cargo_bin("jj").unwrap();
     cmd.current_dir(&repo_path)
-        .args(["commit", "-m", "first commit"])
+        .args(["describe", "-m", "first commit"])
         .assert()
         .success();
 
-    // 4. Create a bookmark (branch)
+    // 4. Create a new change (triggers reading parent commit and writing new commit)
     let mut cmd = Command::cargo_bin("jj").unwrap();
     cmd.current_dir(&repo_path)
-        .args(["bookmark", "create", "my-branch"])
+        .args(["new", "-m", "second commit"])
         .assert()
         .success();
 
-    // 5. Check log execution
+    // 5. Check log (triggers backend read_commit, read_tree)
     let mut cmd = Command::cargo_bin("jj").unwrap();
     cmd.current_dir(&repo_path)
         .args(["log"])
@@ -70,11 +69,10 @@ fn test_sqlite_backend_basics() {
     // 7. Test undo (rollback operation)
     let mut cmd = Command::cargo_bin("jj").unwrap();
     cmd.current_dir(&repo_path)
-        .args(["op", "abandon"])
+        .args(["undo"])
         .assert()
         .success();
 }
-
 
 #[test]
 fn test_sqlite_init_error_conditions() {
