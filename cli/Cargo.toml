@@ -8,7 +8,7 @@ name = "jj"
 path = "src/main.rs"
 
 [dependencies]
-
+jj-commit-cloud-lib = { path = "../lib" }
 jj-lib = { git = "https://github.com/jj-vcs/jj.git", tag = "v0.43.0" }
 jj-cli = { git = "https://github.com/jj-vcs/jj.git", tag = "v0.43.0" }
 clap = { version = "4.6.1", features = ["derive", "deprecated", "wrap_help", "string"] }
@@ -23,4 +23,3 @@ tempfile = "3.10.1"
 [[test]]
 name = "test_sqlite"
 path = "tests/test_sqlite.rs"
-
