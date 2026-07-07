@@ -9,3 +9,5 @@ async-trait = "0.1.80"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 thiserror = "1.0.61"
 tracing = "0.1.40"
+futures = "0.3.30"
+
