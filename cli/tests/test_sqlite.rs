@@ -17,9 +17,8 @@ use assert_cmd::Command;
 use tempfile::tempdir;
 
 #[test]
-#[should_panic(expected = "SqliteBackend::init not implemented")]
+#[should_panic(expected = "SqliteOpStore::init not implemented")]
 fn test_sqlite_backend_basics() {
-
     let temp_dir = tempdir().unwrap();
     // 1. Initialize the SQLite repository (triggers cli init stub)
     let mut cmd = Command::cargo_bin("jj").unwrap();
