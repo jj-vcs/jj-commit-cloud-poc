@@ -8,10 +8,11 @@ name = "jj-cc-server"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal", "process"] }
 clap = { version = "4", features = ["derive"] }
 tonic = "0.12"
 tonic-health = "0.12"
+tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
