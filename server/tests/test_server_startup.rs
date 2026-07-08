@@ -27,7 +27,6 @@ fn extract_listening_address(line: &str) -> Option<String> {
 }
 
 #[tokio::test]
-#[should_panic(expected = "The gRPC connection to the health service should have succeeded")]
 async fn test_server_startup_and_grpc_health_check() {
     // Start the server with --port=0. Setting the port to 0 in tonic tells the OS 
     // to dynamically allocate any available ephemeral port, so we do not have to hardcode a port
