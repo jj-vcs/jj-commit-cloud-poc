@@ -1,0 +1,21 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "jj"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+testutils = { path = "../testutils" }
