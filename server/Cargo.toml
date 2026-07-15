@@ -19,3 +19,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+testutils = { path = "../testutils" }
