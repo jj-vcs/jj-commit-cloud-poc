@@ -2,7 +2,6 @@ use std::fs;
 use tempfile::tempdir;
 
 #[tokio::test]
-#[should_panic(expected = "Unexpected failure")]
 async fn test_cloud_init_integration() {
     // Spawn jj-cc-server using the shared dynamic port test harness
     let server = testutils::spawn_server().await;
@@ -56,5 +55,22 @@ async fn test_cloud_init_integration() {
     // Validate the repo_id string is a valid UUID
     uuid::Uuid::parse_str(repo_id_str)
         .expect("The repo_id should be a valid UUID string");
+}
+
+#[tokio::test]
+async fn test_cloud_init_failure_integration() {
+    let mut cmd = assert_cmd::Command::cargo_bin("jj")
+        .expect("The jj CLI binary should have compiled");
+
+    cmd.args([
+        "cc",
+        "init",
+        "--server",
+        "http://invalid-server-domain-does-not-exist:9999",
+        "--create",
+        "/invalid_path_dest_dir",
+    ]);
+
+    cmd.assert().failure();
 }
 }
