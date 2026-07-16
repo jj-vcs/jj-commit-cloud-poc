@@ -11,11 +11,14 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+jj-lib = "0.43.0"
+cc-lib = { path = "../lib" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3"
-toml = "0.8"
-uuid = { version = "1", features = ["v4"] }
 testutils = { path = "../testutils" }
