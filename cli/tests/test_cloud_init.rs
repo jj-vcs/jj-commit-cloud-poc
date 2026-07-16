@@ -2,7 +2,6 @@ use std::fs;
 use tempfile::tempdir;
 
 #[tokio::test]
-#[should_panic(expected = "Unexpected failure")]
 async fn test_cloud_init_integration() {
     // 1. Spawn jj-cc-server using the shared dynamic port test harness
     let server = testutils::spawn_server().await;
