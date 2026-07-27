@@ -50,6 +50,10 @@ fn main() {
 
     let dest_binary_path = profile_dir.join("jj-cc-server");
 
-    fs::copy(&compiled_binary_path, &dest_binary_path)
-        .expect("Failed to copy compiled jj-cc-server binary to target profile directory");
+    if let Err(e) = fs::copy(&compiled_binary_path, &dest_binary_path) {
+        if e.raw_os_error() != Some(26) {
+            panic!("Failed to copy compiled jj-cc-server binary to target profile directory: {:?}", e);
+        }
+    }
 }
+

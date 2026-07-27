@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package commit_cloud.backend;
+
+service BackendService {
+  rpc RegisterRepository (RegisterRepositoryRequest) returns (RegisterRepositoryResponse);
+
+  rpc ReadCommit (ReadCommitRequest) returns (ReadCommitResponse);
+  rpc WriteCommit (WriteCommitRequest) returns (WriteCommitResponse);
+
+  rpc ReadTree (ReadTreeRequest) returns (ReadTreeResponse);
+  rpc WriteTree (WriteTreeRequest) returns (WriteTreeResponse);
+
+  rpc ReadFile (ReadFileRequest) returns (stream ReadFileResponse);
+  rpc WriteFile (WriteFileRequest) returns (WriteFileResponse);
+
+  rpc ReadSymlink (ReadSymlinkRequest) returns (ReadSymlinkResponse);
+  rpc WriteSymlink (WriteSymlinkRequest) returns (WriteSymlinkResponse);
+}
+
+message RegisterRepositoryRequest {
+  string repo_id = 1;
+}
+
+message RegisterRepositoryResponse {
+  string repo_id = 1;
+}
+
+
+message Signature {
+  string name = 1;
+  string email = 2;
+  int64 timestamp_millis = 3;
+}
+
+message Commit {
+  bytes commit_id = 1;
+  bytes change_id = 2;
+  repeated bytes parent_commit_ids = 3;
+  bytes root_tree_id = 4;
+  string description = 5;
+  Signature author = 6;
+  Signature committer = 7;
+}
+
+message ReadCommitRequest {
+  string repo_id = 1;
+  bytes commit_id = 2;
+}
+
+message ReadCommitResponse {
+  Commit commit = 1;
+}
+
+message WriteCommitRequest {
+  string repo_id = 1;
+  Commit commit = 2;
+}
+
+message WriteCommitResponse {
+  bytes commit_id = 1;
+}
+
+enum TreeEntryType {
+  FILE = 0;
+  TREE = 1;
+  SYMLINK = 2;
+  CONFLICT = 3;
+}
+
+message TreeEntry {
+  string name = 1;
+  bytes entry_id = 2;
+  TreeEntryType entry_type = 3;
+  uint32 executable = 4;
+}
+
+message ReadTreeRequest {
+  string repo_id = 1;
+  bytes tree_id = 2;
+  string path = 3;
+}
+
+message ReadTreeResponse {
+  bytes tree_id = 1;
+  repeated TreeEntry entries = 2;
+}
+
+message WriteTreeRequest {
+  string repo_id = 1;
+  string path = 2;
+  repeated TreeEntry entries = 3;
+}
+
+message WriteTreeResponse {
+  bytes tree_id = 1;
+}
+
+message ReadFileRequest {
+  string repo_id = 1;
+  bytes file_id = 2;
+}
+
+message ReadFileResponse {
+  bytes chunk = 1;
+}
+
+message WriteFileRequest {
+  string repo_id = 1;
+  bytes content = 2;
+}
+
+message WriteFileResponse {
+  bytes file_id = 1;
+}
+
+message ReadSymlinkRequest {
+  string repo_id = 1;
+  bytes symlink_id = 2;
+}
+
+message ReadSymlinkResponse {
+  string target = 1;
+}
+
+message WriteSymlinkRequest {
+  string repo_id = 1;
+  string target = 2;
+}
+
+message WriteSymlinkResponse {
+  bytes symlink_id = 1;
+}

@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package commit_cloud.op_store;
+
+service OpStoreService {
+  rpc ReadOperation (ReadOperationRequest) returns (ReadOperationResponse);
+  rpc WriteOperation (WriteOperationRequest) returns (WriteOperationResponse);
+
+  rpc ReadView (ReadViewRequest) returns (ReadViewResponse);
+  rpc WriteView (WriteViewRequest) returns (WriteViewResponse);
+}
+
+message OperationMetadata {
+  int64 start_time_millis = 1;
+  int64 end_time_millis = 2;
+  string hostname = 3;
+  string username = 4;
+  string description = 5;
+  map<string, string> tags = 6;
+}
+
+message Operation {
+  bytes operation_id = 1;
+  repeated bytes parent_op_ids = 2;
+  bytes view_id = 3;
+  OperationMetadata metadata = 4;
+}
+
+message RefTarget {
+  repeated bytes commit_ids = 1;
+}
+
+message View {
+  bytes view_id = 1;
+  repeated bytes head_commit_ids = 2;
+  repeated bytes public_head_commit_ids = 3;
+  map<string, bytes> wc_commit_ids = 4;
+  map<string, RefTarget> bookmarks = 5;
+  map<string, RefTarget> tags = 6;
+  map<string, RefTarget> git_refs = 7;
+}
+
+message ReadOperationRequest {
+  string repo_id = 1;
+  bytes operation_id = 2;
+}
+
+message ReadOperationResponse {
+  Operation operation = 1;
+}
+
+message WriteOperationRequest {
+  string repo_id = 1;
+  Operation operation = 2;
+}
+
+message WriteOperationResponse {
+  bytes operation_id = 1;
+}
+
+message ReadViewRequest {
+  string repo_id = 1;
+  bytes view_id = 2;
+}
+
+message ReadViewResponse {
+  View view = 1;
+}
+
+message WriteViewRequest {
+  string repo_id = 1;
+  View view = 2;
+}
+
+message WriteViewResponse {
+  bytes view_id = 1;
+}

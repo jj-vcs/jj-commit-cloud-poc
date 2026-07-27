@@ -8,6 +8,17 @@ publish = false
 name = "jj"
 path = "src/main.rs"
 
+[[bin]]
+name = "fake-editor"
+path = "../third_party/cli/testing/fake-editor.rs"
+
+[[bin]]
+name = "fake-diff-editor"
+path = "../third_party/cli/testing/fake-diff-editor.rs"
+
+
+
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
@@ -15,10 +26,41 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 jj-lib = "0.43.0"
+jj-cli = "0.43.0"
 cc-lib = { path = "../lib" }
+bstr = "1.6"
+itertools = "0.12"
+
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3"
+insta = { version = "1.34", features = ["filters"] }
+
+indoc = "2.0"
+bstr = "1.6"
+regex = "1.10"
+itertools = "0.12"
+serde_json = "1.0"
+chrono = "0.4"
+toml_edit = "0.22"
+dunce = "1.0"
 testutils = { path = "../testutils" }
+
+
+
+
+[[test]]
+name = "test_describe_command"
+path = "../third_party/cli/tests/test_describe_command.rs"
+
+[[test]]
+name = "test_edit_command"
+path = "../third_party/cli/tests/test_edit_command.rs"
+
+[[test]]
+name = "test_commit_command"
+path = "../third_party/cli/tests/test_commit_command.rs"
+
+

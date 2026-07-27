@@ -4,8 +4,22 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+pub type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+pub fn hermetic_git() {}
+
+pub fn new_temp_dir() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+pub static HERMETIC_GIT_CONFIGS: &[(&str, &str)] = &[
+    ("user.name", "Test User"),
+    ("user.email", "test.user@example.com"),
+];
+
 pub struct ServerGuard {
-    child: tokio::process::Child,
+
+    child: Option<tokio::process::Child>,
     url: String,
 }
 
@@ -17,7 +31,9 @@ impl ServerGuard {
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+        }
     }
 }
 
@@ -34,8 +50,19 @@ fn extract_listening_address(line: &str) -> Option<String> {
 }
 
 pub async fn spawn_server() -> ServerGuard {
-    // Start the server with --port=0. Setting the port to 0 in tonic tells the OS 
-    // to dynamically allocate any available ephemeral port, preventing port collisions.
+    if let Ok(ext_url) = std::env::var("JJ_TEST_SERVER_URL") {
+        if !ext_url.is_empty() {
+            let mut url = ext_url;
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                url = format!("http://{}", url);
+            }
+            return ServerGuard {
+                child: None,
+                url,
+            };
+        }
+    }
+
     let current_exe = std::env::current_exe().expect("The current test executable path should be retrievable");
     let server_binary_path = current_exe
         .parent().expect("The deps directory should exist")
@@ -44,6 +71,7 @@ pub async fn spawn_server() -> ServerGuard {
 
     let mut child = Command::new(server_binary_path)
         .arg("--port=0")
+        .arg("--db-backend=memory")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -53,9 +81,6 @@ pub async fn spawn_server() -> ServerGuard {
 
     let mut reader = BufReader::new(stdout).lines();
 
-    // Timeout of 2 seconds to find the listening address in stdout. 
-    // 2 seconds is arbitrary but serves as a safe defensive timeout to prevent 
-    // the test from hanging indefinitely if the server hangs.
     let timeout = tokio::time::sleep(Duration::from_secs(2));
     tokio::pin!(timeout);
 
@@ -80,5 +105,9 @@ pub async fn spawn_server() -> ServerGuard {
 
     let url = format!("http://{}", server_addr);
 
-    ServerGuard { child, url }
+    ServerGuard {
+        child: Some(child),
+        url,
+    }
 }
+

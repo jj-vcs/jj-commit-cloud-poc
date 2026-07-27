@@ -15,6 +15,14 @@ tonic-health = "0.12"
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cc-proto = { path = "../proto" }
+uuid = { version = "1", features = ["v4"] }
+blake3 = "1.5"
+hex = "0.4"
+sled = "0.34"
+rusqlite = { version = "0.31", features = ["bundled"] }
+prost = "0.13"
+
 
 [dev-dependencies]
 assert_cmd = "2.0"

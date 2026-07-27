@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package commit_cloud.op_heads_store;
+
+service OpHeadsStoreService {
+  rpc GetOpHeads (GetOpHeadsRequest) returns (GetOpHeadsResponse);
+  rpc AddOpHead (AddOpHeadRequest) returns (AddOpHeadResponse);
+  rpc RemoveOpHead (RemoveOpHeadRequest) returns (RemoveOpHeadResponse);
+}
+
+message GetOpHeadsRequest {
+  string repo_id = 1;
+}
+
+message GetOpHeadsResponse {
+  repeated bytes op_head_ids = 1;
+}
+
+message AddOpHeadRequest {
+  string repo_id = 1;
+  bytes op_head_id = 2;
+}
+
+message AddOpHeadResponse {
+  bool success = 1;
+  repeated bytes current_op_head_ids = 2;
+}
+
+message RemoveOpHeadRequest {
+  string repo_id = 1;
+  bytes op_head_id = 2;
+}
+
+message RemoveOpHeadResponse {
+  bool success = 1;
+  repeated bytes current_op_head_ids = 2;
+}
