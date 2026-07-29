@@ -37,6 +37,25 @@ pub struct CommitCloudBackend {
     empty_tree_id: TreeId,
 }
 
+// TODO: Replace run_async function with a persistent gRPC channel connection in the
+// CommitCloudBackend trait. Member functions should check if connection exists otherwise create
+// one. 
+fn run_async<F, Fut, T>(f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(f())
+    })
+    .join()
+    .map_err(|e| format!("Thread join error: {:?}", e))?
+}
+
 impl CommitCloudBackend {
     pub fn name() -> &'static str {
         "commit_cloud"
@@ -51,21 +70,15 @@ impl CommitCloudBackend {
         let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
 
-        // Open a synchronous gRPC connection and register the repository UUID in the cloud!
-        let register_future = async {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url.to_string()).await?;
+        let server_url_cloned = server_url.to_string();
+        let repo_id_cloned = repo_id.clone();
+        run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
             client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
-                repo_id: repo_id.clone(),
+                repo_id: repo_id_cloned,
             })).await?;
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-        };
-
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            tokio::task::block_in_place(|| handle.block_on(register_future))?;
-        } else {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(register_future)?;
-        }
+            Ok(())
+        })?;
 
         // Write local config toml
         let config_path = store_path.join("config.toml");
@@ -99,22 +112,7 @@ impl CommitCloudBackend {
     }
 }
 
-fn run_async<F, Fut, T>(f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
 
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + 'static,
-    T: Send + 'static,
-{
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(f())
-    })
-    .join()
-    .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> { "Thread panicked".into() })?
-}
 
 // TODO: Investigate if there is a better way to do these object to proto conversions
 fn signature_to_proto(sig: &Signature) -> cc_common::backend::Signature {

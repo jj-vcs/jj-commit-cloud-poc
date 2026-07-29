@@ -1,7 +1,6 @@
 use tempfile::tempdir;
 
 #[tokio::test]
-#[should_panic(expected = "unrecognized subcommand")]
 async fn test_log_command_integration() {
     // Spawn jj-cc-server using the shared dynamic port test harness
     let server = testutils::spawn_server().await;
