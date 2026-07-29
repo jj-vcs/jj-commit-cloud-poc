@@ -9,3 +9,8 @@ jj-lib = "0.43.0"
 async-trait = "0.1"
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
+cc-common = { path = "../common" }
+tonic = "0.12.3"
+tokio = { version = "1.39", features = ["rt", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

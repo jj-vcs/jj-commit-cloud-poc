@@ -17,6 +17,20 @@ use uuid::Uuid;
 const HASH_LENGTH: usize = 20;
 const CHANGE_ID_LENGTH: usize = 16;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommitCloudConfig {
+    pub server_url: String,
+    pub repo_id: String,
+}
+
+impl CommitCloudConfig {
+    pub fn load_from_store(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let config_path = store_path.join("config.toml");
+        let content = fs::read_to_string(&config_path)?;
+        Ok(toml::from_str(&content)?)
+    }
+}
+
 #[derive(Debug)]
 pub struct CommitCloudBackend {
     root_commit_id: CommitId,
@@ -38,13 +52,29 @@ impl CommitCloudBackend {
         let root_change_id = ChangeId::from_bytes(&[0u8; CHANGE_ID_LENGTH]);
         let empty_tree_id = TreeId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
 
+        // Open a synchronous gRPC connection and register the repository UUID in the cloud!
+        let register_future = async {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url.to_string()).await?;
+            client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
+                repo_id: repo_id.clone(),
+            })).await?;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        };
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(register_future))?;
+        } else {
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(register_future)?;
+        }
+
         // Write local config toml
         let config_path = store_path.join("config.toml");
-        let config_content = format!(
-            "server_url = \"{}\"\nrepo_id = \"{}\"\n",
-            server_url, repo_id
-        );
-        fs::write(&config_path, config_content)?;
+        let config = CommitCloudConfig {
+            server_url: server_url.to_string(),
+            repo_id: repo_id.clone(),
+        };
+        fs::write(&config_path, toml::to_string_pretty(&config)?)?;
 
         Ok(Self {
             root_commit_id,
