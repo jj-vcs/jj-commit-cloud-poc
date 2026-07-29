@@ -58,6 +58,52 @@ async fn test_cloud_init_integration() {
 }
 
 #[tokio::test]
+#[should_panic]
+async fn test_cloud_init_repo_registered() {
+    let server = testutils::spawn_server().await;
+
+    let temp_dir = tempdir().expect("temporary directory should have been created for testing");
+    let repo_path = temp_dir.path();
+
+    let mut cmd = assert_cmd::Command::cargo_bin("jj")
+        .expect("The jj CLI binary should have compiled");
+
+    cmd.current_dir(repo_path)
+        .args([
+            "cc",
+            "init",
+            "--server",
+            server.url(),
+            "--create",
+            ".",
+        ]);
+
+    cmd.assert().success();
+
+    let jj_store_path = repo_path.join(".jj/repo/store");
+    let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
+        .expect("The config.toml file should be readable");
+    let parsed_config: toml::Value = toml::from_str(&config_content)
+        .expect("The config.toml file should be valid TOML");
+    let repo_id_str = parsed_config.get("repo_id")
+        .and_then(|v| v.as_str())
+        .expect("The repo_id field should exist and be a string");
+
+    // Verify that the repository was actually registered in the cloud server over gRPC
+    let mut client = cc_proto::backend::backend_service_client::BackendServiceClient::connect(server.url().to_string())
+        .await
+        .expect("Failed to connect to test server over gRPC");
+
+    let request = tonic::Request::new(cc_proto::backend::ReadCommitRequest {
+        repo_id: repo_id_str.to_string(),
+        commit_id: vec![0u8; 20], // The root commit ID
+    });
+
+    let response = client.read_commit(request).await;
+    assert!(response.is_ok(), "Server failed to find our repo_id in its cloud database: {:?}", response.err());
+}
+
+#[tokio::test]
 async fn test_cloud_init_failure_integration() {
     let mut cmd = assert_cmd::Command::cargo_bin("jj")
         .expect("The jj CLI binary should have compiled");
@@ -72,5 +118,4 @@ async fn test_cloud_init_failure_integration() {
     ]);
 
     cmd.assert().failure();
-}
 }
