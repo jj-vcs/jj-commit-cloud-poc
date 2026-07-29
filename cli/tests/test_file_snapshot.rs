@@ -2,7 +2,6 @@ use std::fs;
 use tempfile::tempdir;
 
 #[tokio::test]
-#[should_panic]
 async fn test_file_snapshot_integration() {
     // Spawn jj-cc-server using the shared dynamic port test harness
     let server = testutils::spawn_server().await;

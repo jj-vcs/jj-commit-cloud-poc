@@ -129,6 +129,8 @@ struct Args {
 pub struct CommitCloudServerImpl {
     repos: Mutex<HashSet<String>>,
     commits: Mutex<HashMap<String, HashMap<Vec<u8>, Commit>>>,
+    trees: Mutex<HashMap<String, HashMap<Vec<u8>, Vec<TreeEntry>>>>,
+    files: Mutex<HashMap<String, HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 #[tonic::async_trait]
@@ -198,32 +200,104 @@ impl BackendService for CommitCloudServerImpl {
 
     async fn read_tree(
         &self,
-        _request: tonic::Request<ReadTreeRequest>,
+        request: tonic::Request<ReadTreeRequest>,
     ) -> Result<tonic::Response<ReadTreeResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+        let tree_id = req.tree_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before requesting trees"));
+        }
+
+        if tree_id == cc_common::EMPTY_TREE_ID_BYTES {
+            return Ok(tonic::Response::new(ReadTreeResponse {
+                tree_id,
+                entries: vec![],
+            }));
+        }
+
+        let trees = self.trees.lock().unwrap();
+        if let Some(repo_trees) = trees.get(&repo_id) {
+            if let Some(entries) = repo_trees.get(&tree_id) {
+                return Ok(tonic::Response::new(ReadTreeResponse {
+                    tree_id,
+                    entries: entries.clone(),
+                }));
+            }
+        }
+        Err(tonic::Status::not_found("tree should have been present in cloud database"))
     }
 
     async fn write_tree(
         &self,
-        _request: tonic::Request<WriteTreeRequest>,
+        request: tonic::Request<WriteTreeRequest>,
     ) -> Result<tonic::Response<WriteTreeResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before writing trees"));
+        }
+
+        let tree_id = compute_git_tree_hash(&req.entries);
+
+        let mut trees = self.trees.lock().unwrap();
+        let repo_trees = trees.entry(repo_id).or_default();
+        repo_trees.insert(tree_id.clone(), req.entries);
+
+        Ok(tonic::Response::new(WriteTreeResponse { tree_id }))
     }
 
     type ReadFileStream = tokio_stream::wrappers::ReceiverStream<Result<ReadFileResponse, tonic::Status>>;
 
     async fn read_file(
         &self,
-        _request: tonic::Request<ReadFileRequest>,
+        request: tonic::Request<ReadFileRequest>,
     ) -> Result<tonic::Response<Self::ReadFileStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+        let file_id = req.file_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before reading files"));
+        }
+
+        let files = self.files.lock().unwrap();
+        let content = files
+            .get(&repo_id)
+            .and_then(|repo_files| repo_files.get(&file_id))
+            .cloned()
+            .ok_or_else(|| tonic::Status::not_found("file should have been present in cloud database"))?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(ReadFileResponse { chunk: content })).await;
+        });
+
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
+    // TODO: Upgrade write_file RPC handler to consume tonic::Streaming<WriteFileRequest>
+    // to handle chunked streaming uploads for large files (>4MB) without hitting gRPC limits.
     async fn write_file(
         &self,
-        _request: tonic::Request<WriteFileRequest>,
+        request: tonic::Request<WriteFileRequest>,
     ) -> Result<tonic::Response<WriteFileResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before writing files"));
+        }
+
+        let file_id = compute_git_blob_hash(&req.content);
+
+        let mut files = self.files.lock().unwrap();
+        let repo_files = files.entry(repo_id).or_default();
+        repo_files.insert(file_id.clone(), req.content);
+
+        Ok(tonic::Response::new(WriteFileResponse { file_id }))
     }
 
     async fn read_symlink(
