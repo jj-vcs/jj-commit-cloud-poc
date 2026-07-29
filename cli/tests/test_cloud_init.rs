@@ -58,7 +58,6 @@ async fn test_cloud_init_integration() {
 }
 
 #[tokio::test]
-#[should_panic]
 async fn test_cloud_init_repo_registered() {
     let server = testutils::spawn_server().await;
 
@@ -96,7 +95,7 @@ async fn test_cloud_init_repo_registered() {
 
     let request = tonic::Request::new(cc_proto::backend::ReadCommitRequest {
         repo_id: repo_id_str.to_string(),
-        commit_id: vec![0u8; 20], // The root commit ID
+        commit_id: vec![0u8; cc_common::COMMIT_ID_LENGTH], // The root commit ID
     });
 
     let response = client.read_commit(request).await;

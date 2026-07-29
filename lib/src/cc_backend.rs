@@ -5,6 +5,7 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt as _;
 use jj_lib::backend::*;
 use jj_lib::index::Index;
+use jj_lib::object_id::ObjectId;
 use jj_lib::repo_path::{RepoPath, RepoPathBuf};
 use std::fmt::Debug;
 use std::fs;
@@ -12,10 +13,6 @@ use std::path::Path;
 use std::pin::Pin;
 use std::time::SystemTime;
 use uuid::Uuid;
-
-// git standard hash sizes, see upstream /lib/src/git_backend.rs
-const HASH_LENGTH: usize = 20;
-const CHANGE_ID_LENGTH: usize = 16;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommitCloudConfig {
@@ -33,6 +30,8 @@ impl CommitCloudConfig {
 
 #[derive(Debug)]
 pub struct CommitCloudBackend {
+    server_url: String,
+    repo_id: String,
     root_commit_id: CommitId,
     root_change_id: ChangeId,
     empty_tree_id: TreeId,
@@ -48,9 +47,9 @@ impl CommitCloudBackend {
         server_url: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let repo_id = Uuid::new_v4().to_string();
-        let root_commit_id = CommitId::from_bytes(&[0u8; HASH_LENGTH]);
-        let root_change_id = ChangeId::from_bytes(&[0u8; CHANGE_ID_LENGTH]);
-        let empty_tree_id = TreeId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+        let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
+        let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
+        let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
 
         // Open a synchronous gRPC connection and register the repository UUID in the cloud!
         let register_future = async {
@@ -77,6 +76,22 @@ impl CommitCloudBackend {
         fs::write(&config_path, toml::to_string_pretty(&config)?)?;
 
         Ok(Self {
+            server_url: server_url.to_string(),
+            repo_id,
+            root_commit_id,
+            root_change_id,
+            empty_tree_id,
+        })
+    }
+
+    pub fn load(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let config = CommitCloudConfig::load_from_store(store_path)?;
+        let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
+        let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
+        let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
+        Ok(Self {
+            server_url: config.server_url,
+            repo_id: config.repo_id,
             root_commit_id,
             root_change_id,
             empty_tree_id,
@@ -84,18 +99,102 @@ impl CommitCloudBackend {
     }
 }
 
+fn run_async<F, Fut, T>(f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(f())
+    })
+    .join()
+    .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> { "Thread panicked".into() })?
+}
+
+// TODO: Investigate if there is a better way to do these object to proto conversions
+fn signature_to_proto(sig: &Signature) -> cc_common::backend::Signature {
+    cc_common::backend::Signature {
+        name: sig.name.clone(),
+        email: sig.email.clone(),
+        timestamp: Some(cc_common::backend::Timestamp {
+            millis_since_epoch: sig.timestamp.timestamp.0,
+            tz_offset: sig.timestamp.tz_offset,
+        }),
+    }
+}
+
+fn signature_from_proto(proto: cc_common::backend::Signature) -> Signature {
+    let ts = proto.timestamp.unwrap_or_default();
+    Signature {
+        name: proto.name,
+        email: proto.email,
+        timestamp: Timestamp {
+            timestamp: MillisSinceEpoch(ts.millis_since_epoch),
+            tz_offset: ts.tz_offset,
+        },
+    }
+}
+
+fn commit_to_proto(commit: &Commit) -> cc_common::backend::Commit {
+    cc_common::backend::Commit {
+        commit_id: vec![],
+        change_id: commit.change_id.to_bytes().to_vec(),
+        parent_commit_ids: commit.parents.iter().map(|id| id.to_bytes().to_vec()).collect(),
+        root_tree_id: commit.root_tree.iter().map(|id| id.to_bytes().to_vec()).collect(),
+        description: commit.description.clone(),
+        author: Some(signature_to_proto(&commit.author)),
+        committer: Some(signature_to_proto(&commit.committer)),
+        predecessors: commit.predecessors.iter().map(|id| id.to_bytes().to_vec()).collect(),
+        conflict_labels: commit.conflict_labels.as_slice().to_owned(),
+        secure_sig: commit.secure_sig.as_ref().map(|s| s.sig.clone()),
+    }
+}
+
+fn commit_from_proto(proto_commit: cc_common::backend::Commit) -> Commit {
+    let author = signature_from_proto(proto_commit.author.unwrap_or_default());
+    let committer = signature_from_proto(proto_commit.committer.unwrap_or_default());
+
+    let merge_builder: jj_lib::merge::MergeBuilder<_> = proto_commit
+        .root_tree_id
+        .into_iter()
+        .map(|b| TreeId::from_bytes(&b))
+        .collect();
+
+    let root_tree = merge_builder.build();
+    let conflict_labels = jj_lib::conflict_labels::ConflictLabels::from_vec(proto_commit.conflict_labels).into_merge();
+
+
+    Commit {
+        parents: proto_commit.parent_commit_ids.iter().map(|b| CommitId::from_bytes(b)).collect(),
+        predecessors: proto_commit.predecessors.iter().map(|b| CommitId::from_bytes(b)).collect(),
+        root_tree,
+        change_id: ChangeId::from_bytes(&proto_commit.change_id),
+        description: proto_commit.description,
+        author,
+        committer,
+        conflict_labels,
+        secure_sig: None,
+    }
+}
+
 #[async_trait]
 impl Backend for CommitCloudBackend {
+
     fn name(&self) -> &str {
         Self::name()
     }
 
     fn commit_id_length(&self) -> usize {
-        HASH_LENGTH
+        cc_common::COMMIT_ID_LENGTH
     }
 
     fn change_id_length(&self) -> usize {
-        CHANGE_ID_LENGTH
+        cc_common::CHANGE_ID_LENGTH
     }
 
     fn root_commit_id(&self) -> &CommitId {
@@ -165,7 +264,39 @@ impl Backend for CommitCloudBackend {
                 self.empty_tree_id.clone(),
             ));
         }
-        Err(BackendError::Unsupported("read_commit not supported".to_string()))
+
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+        let commit_id_bytes = id.to_bytes().to_vec();
+        let commit_id_hex = id.hex();
+
+        let proto_commit = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.read_commit(tonic::Request::new(cc_common::backend::ReadCommitRequest {
+                repo_id,
+                commit_id: commit_id_bytes,
+            })).await;
+
+            match res {
+                Ok(r) => r.into_inner().commit.ok_or_else(|| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "server response should have contained commit data"))
+                        as Box<dyn std::error::Error + Send + Sync>
+                }),
+                Err(status) if status.code() == tonic::Code::NotFound => {
+                    Err(Box::new(BackendError::ObjectNotFound {
+                        object_type: "commit".into(),
+                        hash: commit_id_hex,
+                        source: status.into(),
+                    }) as Box<dyn std::error::Error + Send + Sync>)
+                }
+                Err(status) => Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
+            }
+        }).map_err(|e| match e.downcast::<BackendError>() {
+            Ok(err) => *err,
+            Err(e) => BackendError::Other(e),
+        })?;
+
+        Ok(commit_from_proto(proto_commit))
     }
 
     async fn write_commit(
@@ -173,8 +304,21 @@ impl Backend for CommitCloudBackend {
         commit: Commit,
         _sign_with: Option<&mut SigningFn>,
     ) -> BackendResult<(CommitId, Commit)> {
-        let id = CommitId::from_bytes(&[1u8; HASH_LENGTH]);
-        Ok((id, commit))
+        let proto_commit = commit_to_proto(&commit);
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+
+        let returned_id_bytes = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.write_commit(tonic::Request::new(cc_common::backend::WriteCommitRequest {
+                repo_id,
+                commit: Some(proto_commit),
+            })).await?;
+            Ok(res.into_inner().commit_id)
+        }).map_err(|e| BackendError::Other(e.into()))?;
+
+        let returned_id = CommitId::from_bytes(&returned_id_bytes);
+        Ok((returned_id, commit))
     }
 
     fn get_copy_records(
