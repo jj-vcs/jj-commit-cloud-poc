@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package commit_cloud.backend;
+
+// Service interface for reading and writing Jujutsu backend objects over gRPC
+service BackendService {
+  // Register a new repository on the remote backend
+  rpc RegisterRepository (RegisterRepositoryRequest) returns (RegisterRepositoryResponse);
+
+  // Commit object RPCs
+  rpc ReadCommit (ReadCommitRequest) returns (ReadCommitResponse);
+  rpc WriteCommit (WriteCommitRequest) returns (WriteCommitResponse);
+
+  // Directory tree RPCs
+  rpc ReadTree (ReadTreeRequest) returns (ReadTreeResponse);
+  rpc WriteTree (WriteTreeRequest) returns (WriteTreeResponse);
+
+  // File content / blob RPCs
+  rpc ReadFile (ReadFileRequest) returns (stream ReadFileResponse);
+  // TODO: Upgrade WriteFile to a streaming RPC (rpc WriteFile (stream WriteFileRequest))
+  // to support uploading large files (>4MB) without hitting gRPC message size limits
+  rpc WriteFile (WriteFileRequest) returns (WriteFileResponse);
+
+  // Symlink RPCs
+  rpc ReadSymlink (ReadSymlinkRequest) returns (ReadSymlinkResponse);
+  rpc WriteSymlink (WriteSymlinkRequest) returns (WriteSymlinkResponse);
+}
+
+// Repository registration messages for initializing a remote repo
+// Used when running `jj cc init` to register a new local repository with the backend server
+message RegisterRepositoryRequest {
+  string repo_id = 1;
+}
+
+message RegisterRepositoryResponse {
+  string repo_id = 1;
+}
+
+// Messages for representing commit metadata and handling commit read/write RPCs
+// Used during backend commit lookups and writes when creating or walking change history
+message Timestamp {
+  int64 millis_since_epoch = 1;
+  int32 tz_offset = 2;
+}
+
+message Signature {
+  string name = 1;
+  string email = 2;
+  Timestamp timestamp = 3;
+}
+
+// we use repeated bytes for parent commit ids for merge conflits, see upstream lib/src/protos/simple_store.proto
+message Commit {
+  bytes commit_id = 1;
+  bytes change_id = 2;
+  repeated bytes parent_commit_ids = 3;
+  repeated bytes root_tree_id = 4;
+  string description = 5;
+  Signature author = 6;
+  Signature committer = 7;
+  repeated bytes predecessors = 8;
+  repeated string conflict_labels = 9;
+  optional bytes secure_sig = 10;
+}
+
+message ReadCommitRequest {
+  string repo_id = 1;
+  bytes commit_id = 2;
+}
+
+message ReadCommitResponse {
+  Commit commit = 1;
+}
+
+message WriteCommitRequest {
+  string repo_id = 1;
+  Commit commit = 2;
+}
+
+message WriteCommitResponse {
+  bytes commit_id = 1;
+}
+
+// Messages for representing directory trees and handling tree read/write RPCs
+// Used to read and construct file directory structures for root and nested trees
+message File {
+  bytes id = 1;
+  bool executable = 2;
+  bytes copy_id = 3;
+}
+
+message TreeValue {
+  oneof value {
+    File file = 1;
+    bytes symlink_id = 2;
+    bytes tree_id = 3;
+    bytes conflict_id = 4;
+  }
+}
+
+message TreeEntry {
+  string name = 1;
+  TreeValue value = 2;
+}
+
+message ReadTreeRequest {
+  string repo_id = 1;
+  bytes tree_id = 2;
+  string path = 3;
+}
+
+message ReadTreeResponse {
+  bytes tree_id = 1;
+  repeated TreeEntry entries = 2;
+}
+
+message WriteTreeRequest {
+  string repo_id = 1;
+  string path = 2;
+  repeated TreeEntry entries = 3;
+}
+
+message WriteTreeResponse {
+  bytes tree_id = 1;
+}
+
+// Messages for reading and writing file contents/blobs
+// Used during working copy snapshotting to store and retrieve file contents
+message ReadFileRequest {
+  string repo_id = 1;
+  bytes file_id = 2;
+}
+
+message ReadFileResponse {
+  bytes chunk = 1;
+}
+
+message WriteFileRequest {
+  string repo_id = 1;
+  bytes content = 2;
+}
+
+message WriteFileResponse {
+  bytes file_id = 1;
+}
+
+// Messages for reading and writing symlinks
+// Used to read/write symlinks, mirrors the commit protos
+message ReadSymlinkRequest {
+  string repo_id = 1;
+  bytes symlink_id = 2;
+}
+
+message ReadSymlinkResponse {
+  string target = 1;
+}
+
+message WriteSymlinkRequest {
+  string repo_id = 1;
+  string target = 2;
+}
+
+message WriteSymlinkResponse {
+  bytes symlink_id = 1;
+}

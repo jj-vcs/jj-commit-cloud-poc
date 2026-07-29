@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["server", "testutils", "cli", "lib"]
+members = ["server", "testutils", "cli", "lib", "common"]
