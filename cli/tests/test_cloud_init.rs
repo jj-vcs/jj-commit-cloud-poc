@@ -89,17 +89,21 @@ async fn test_cloud_init_repo_registered() {
         .expect("The repo_id field should exist and be a string");
 
     // Verify that the repository was actually registered in the cloud server over gRPC
-    let mut client = cc_proto::backend::backend_service_client::BackendServiceClient::connect(server.url().to_string())
+    let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server.url().to_string())
         .await
-        .expect("Failed to connect to test server over gRPC");
+        .expect("gRPC connection to test server should have succeeded");
 
-    let request = tonic::Request::new(cc_proto::backend::ReadCommitRequest {
+    let request = tonic::Request::new(cc_common::backend::ReadCommitRequest {
         repo_id: repo_id_str.to_string(),
-        commit_id: vec![0u8; cc_common::COMMIT_ID_LENGTH], // The root commit ID
+        commit_id: vec![1u8; cc_common::COMMIT_ID_LENGTH], // Dummy commit ID
     });
 
-    let response = client.read_commit(request).await;
-    assert!(response.is_ok(), "Server failed to find our repo_id in its cloud database: {:?}", response.err());
+    let err = client.read_commit(request).await.unwrap_err();
+    assert_eq!(
+        err.message(),
+        "commit should have been present in cloud database",
+        "Repository was not registered in the cloud server!"
+    );
 }
 
 #[tokio::test]

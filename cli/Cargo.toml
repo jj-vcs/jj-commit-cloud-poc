@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 jj-lib = "0.43.0"
+jj-cli = "0.43.0"
 cc-lib = { path = "../lib" }
 
 [dev-dependencies]
