@@ -2867,6 +2867,7 @@ dependencies = [
  "clap",
  "gix 0.68.0",
  "predicates",
+ "prost 0.13.5",
  "testutils",
  "tokio",
  "tokio-stream",

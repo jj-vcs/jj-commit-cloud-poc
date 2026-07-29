@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Mutex;
 use tonic::transport::Server;
@@ -128,6 +128,7 @@ struct Args {
 #[derive(Debug, Default)]
 pub struct CommitCloudServerImpl {
     repos: Mutex<HashSet<String>>,
+    commits: Mutex<HashMap<String, HashMap<Vec<u8>, Commit>>>,
 }
 
 #[tonic::async_trait]
@@ -147,16 +148,52 @@ impl BackendService for CommitCloudServerImpl {
 
     async fn read_commit(
         &self,
-        _request: tonic::Request<ReadCommitRequest>,
+        request: tonic::Request<ReadCommitRequest>,
     ) -> Result<tonic::Response<ReadCommitResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+        let commit_id = req.commit_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before requesting commits"));
+        }
+
+        let commits = self.commits.lock().unwrap();
+        if let Some(repo_commits) = commits.get(&repo_id) {
+            if let Some(commit) = repo_commits.get(&commit_id) {
+                return Ok(tonic::Response::new(ReadCommitResponse {
+                    commit: Some(commit.clone()),
+                }));
+            }
+        }
+        Err(tonic::Status::not_found("commit should have been present in cloud database"))
     }
 
     async fn write_commit(
         &self,
-        _request: tonic::Request<WriteCommitRequest>,
+        request: tonic::Request<WriteCommitRequest>,
     ) -> Result<tonic::Response<WriteCommitResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let repo_id = req.repo_id;
+
+        if !self.repos.lock().unwrap().contains(&repo_id) {
+            return Err(tonic::Status::not_found("repository should have been registered before requesting commits"));
+        }
+
+        let mut commit = req.commit.ok_or_else(|| tonic::Status::invalid_argument("request should have contained commit data"))?;
+        let commit_id = if commit.commit_id.is_empty() {
+            compute_git_commit_hash(&commit)
+        } else {
+            commit.commit_id.clone()
+        };
+        commit.commit_id = commit_id.clone();
+        info!("Writing commit {:?} for repo {}", commit_id, repo_id);
+
+        let mut commits = self.commits.lock().unwrap();
+        let repo_commits = commits.entry(repo_id).or_default();
+        repo_commits.insert(commit_id.clone(), commit);
+
+        Ok(tonic::Response::new(WriteCommitResponse { commit_id }))
     }
 
     async fn read_tree(
