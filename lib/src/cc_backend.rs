@@ -6,7 +6,7 @@ use futures::StreamExt as _;
 use jj_lib::backend::*;
 use jj_lib::index::Index;
 use jj_lib::object_id::ObjectId;
-use jj_lib::repo_path::{RepoPath, RepoPathBuf};
+use jj_lib::repo_path::{RepoPath, RepoPathBuf, RepoPathComponentBuf};
 use std::fmt::Debug;
 use std::fs;
 use std::path::Path;
@@ -112,7 +112,12 @@ impl CommitCloudBackend {
     }
 }
 
-
+// Functions below turn commit objects into protobuf objects defined in proto/src/backend.rs
+// see upstream jj/lib/src/simple_backend.rs for an example on how they are implemented in the
+// simple backend.
+//
+// These are needed for the Backend:: function calls to reusably serialize jj objects to their proto
+// counterparts
 
 // TODO: Investigate if there is a better way to do these object to proto conversions
 fn signature_to_proto(sig: &Signature) -> cc_common::backend::Signature {
@@ -180,6 +185,56 @@ fn commit_from_proto(proto_commit: cc_common::backend::Commit) -> Commit {
     }
 }
 
+fn tree_entry_to_proto(entry: &jj_lib::backend::TreeEntry) -> BackendResult<cc_common::backend::TreeEntry> {
+    let value = match entry.value() {
+        TreeValue::File { id, executable, copy_id } => {
+            cc_common::backend::TreeValue {
+                value: Some(cc_common::backend::tree_value::Value::File(cc_common::backend::File {
+                    id: id.to_bytes().to_vec(),
+                    executable: *executable,
+                    copy_id: copy_id.to_bytes().to_vec(),
+                })),
+            }
+        }
+        TreeValue::Symlink(id) => {
+            cc_common::backend::TreeValue {
+                value: Some(cc_common::backend::tree_value::Value::SymlinkId(id.to_bytes().to_vec())),
+            }
+        }
+        TreeValue::Tree(id) => {
+            cc_common::backend::TreeValue {
+                value: Some(cc_common::backend::tree_value::Value::TreeId(id.to_bytes().to_vec())),
+            }
+        }
+        TreeValue::GitSubmodule(_id) => {
+            return Err(BackendError::Unsupported("Git submodules are not supported".into()));
+        }
+    };
+
+    Ok(cc_common::backend::TreeEntry {
+        name: entry.name().as_internal_str().to_string(),
+        value: Some(value),
+    })
+}
+
+fn tree_entry_from_proto(proto_entry: cc_common::backend::TreeEntry) -> Result<(RepoPathComponentBuf, TreeValue), Box<dyn std::error::Error + Send + Sync>> {
+    let component = RepoPathComponentBuf::new(proto_entry.name)?;
+    let proto_val = proto_entry.value.ok_or_else(|| "tree entry should have contained a TreeValue")?;
+    let val = match proto_val.value.ok_or_else(|| "TreeValue should have contained an inner value")? {
+        cc_common::backend::tree_value::Value::File(f) => TreeValue::File {
+            id: FileId::from_bytes(&f.id),
+            executable: f.executable,
+            copy_id: CopyId::from_bytes(if f.copy_id.len() == cc_common::COMMIT_ID_LENGTH { &f.copy_id } else { &cc_common::ROOT_COMMIT_ID_BYTES }),
+        },
+        cc_common::backend::tree_value::Value::SymlinkId(id) => TreeValue::Symlink(SymlinkId::from_bytes(&id)),
+        cc_common::backend::tree_value::Value::TreeId(id) => TreeValue::Tree(TreeId::from_bytes(&id)),
+        cc_common::backend::tree_value::Value::ConflictId(_) => {
+            return Err("tree entry should not have contained a ConflictId".into());
+        }
+    };
+    Ok((component, val))
+}
+
 #[async_trait]
 impl Backend for CommitCloudBackend {
 
@@ -214,17 +269,72 @@ impl Backend for CommitCloudBackend {
     async fn read_file(
         &self,
         _path: &RepoPath,
-        _id: &FileId,
+        id: &FileId,
     ) -> BackendResult<Pin<Box<dyn futures::AsyncRead + Send>>> {
-        Err(BackendError::Unsupported("read_file not supported".to_string()))
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+        let file_id_bytes = id.to_bytes().to_vec();
+        let file_id_hex = id.hex();
+
+        let content = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.read_file(tonic::Request::new(cc_common::backend::ReadFileRequest {
+                repo_id,
+                file_id: file_id_bytes,
+            })).await;
+
+            let mut stream = match res {
+                Ok(r) => r.into_inner(),
+                Err(status) if status.code() == tonic::Code::NotFound => {
+                    return Err(Box::new(BackendError::ObjectNotFound {
+                        object_type: "file".into(),
+                        hash: file_id_hex,
+                        source: status.into(),
+                    }) as Box<dyn std::error::Error + Send + Sync>);
+                }
+                Err(status) => return Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
+            };
+
+            let mut content = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| BackendError::Other(e.into()))?;
+                content.extend_from_slice(&chunk.chunk);
+            }
+            Ok(content)
+        }).map_err(|e| match e.downcast::<BackendError>() {
+            Ok(err) => *err,
+            Err(e) => BackendError::Other(e),
+        })?;
+
+        let cursor = futures::io::Cursor::new(content);
+        Ok(Box::pin(cursor) as Pin<Box<dyn futures::AsyncRead + Send>>)
     }
 
+    // TODO: Upgrade write_file to stream 64KB chunks directly from AsyncRead to gRPC
+    // instead of buffering the whole file payload into memory in a single unary RPC.
     async fn write_file(
         &self,
         _path: &RepoPath,
-        _contents: &mut (dyn futures::AsyncRead + Send + Unpin),
+        contents: &mut (dyn futures::AsyncRead + Send + Unpin),
     ) -> BackendResult<FileId> {
-        Err(BackendError::Unsupported("write_file not supported".to_string()))
+        let mut buffer = Vec::new();
+        futures::AsyncReadExt::read_to_end(contents, &mut buffer)
+            .await
+            .map_err(|e| BackendError::Other(e.into()))?;
+
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+
+        let file_id_bytes = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.write_file(tonic::Request::new(cc_common::backend::WriteFileRequest {
+                repo_id,
+                content: buffer,
+            })).await?;
+            Ok(res.into_inner().file_id)
+        }).map_err(|e| BackendError::Other(e.into()))?;
+
+        Ok(FileId::from_bytes(&file_id_bytes))
     }
 
     async fn read_symlink(&self, _path: &RepoPath, _id: &SymlinkId) -> BackendResult<String> {
@@ -247,12 +357,74 @@ impl Backend for CommitCloudBackend {
         Err(BackendError::Unsupported("copies not supported".to_string()))
     }
 
-    async fn read_tree(&self, _path: &RepoPath, _id: &TreeId) -> BackendResult<Tree> {
-        Err(BackendError::Unsupported("read_tree not supported".to_string()))
+    async fn read_tree(&self, path: &RepoPath, id: &TreeId) -> BackendResult<Tree> {
+        if *id == self.empty_tree_id {
+            return Ok(Tree::from_sorted_entries(vec![]));
+        }
+
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+        let tree_id_bytes = id.to_bytes().to_vec();
+        let tree_id_hex = id.hex();
+        let path_str = path.as_internal_file_string().to_string();
+
+        let proto_entries = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.read_tree(tonic::Request::new(cc_common::backend::ReadTreeRequest {
+                repo_id,
+                tree_id: tree_id_bytes,
+                path: path_str,
+            })).await;
+
+            match res {
+                Ok(r) => Ok(r.into_inner().entries),
+                Err(status) if status.code() == tonic::Code::NotFound => {
+                    Err(Box::new(BackendError::ObjectNotFound {
+                        object_type: "tree".into(),
+                        hash: tree_id_hex,
+                        source: status.into(),
+                    }) as Box<dyn std::error::Error + Send + Sync>)
+                }
+                Err(status) => Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
+            }
+
+        }).map_err(|e| match e.downcast::<BackendError>() {
+            Ok(err) => *err,
+            Err(e) => BackendError::Other(e),
+        })?;
+
+        let mut jj_entries = Vec::new();
+        for entry in proto_entries {
+            let (comp, val) = tree_entry_from_proto(entry).map_err(|e| BackendError::Other(e.into()))?;
+            jj_entries.push((comp, val));
+        }
+
+        Ok(Tree::from_sorted_entries(jj_entries))
     }
 
-    async fn write_tree(&self, _path: &RepoPath, _tree: &Tree) -> BackendResult<TreeId> {
-        Ok(self.empty_tree_id.clone())
+    async fn write_tree(&self, path: &RepoPath, tree: &Tree) -> BackendResult<TreeId> {
+        if tree.entries().next().is_none() {
+            return Ok(self.empty_tree_id.clone());
+        }
+
+        let proto_entries: Result<Vec<_>, _> = tree.entries().map(|e| tree_entry_to_proto(&e)).collect();
+        let proto_entries = proto_entries?;
+
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+        let path_str = path.as_internal_file_string().to_string();
+
+        let tree_id_bytes = run_async(move || async move {
+            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
+            let res = client.write_tree(tonic::Request::new(cc_common::backend::WriteTreeRequest {
+                repo_id,
+                path: path_str,
+                entries: proto_entries,
+            })).await?;
+            Ok(res.into_inner().tree_id)
+        }).map_err(|e| BackendError::Other(e.into()))?;
+
+        Ok(TreeId::from_bytes(&tree_id_bytes))
     }
 
     async fn read_commit(&self, id: &CommitId) -> BackendResult<Commit> {
