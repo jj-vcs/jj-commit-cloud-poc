@@ -81,7 +81,8 @@ pub async fn spawn_server() -> ServerGuard {
 
     let mut reader = BufReader::new(stdout).lines();
 
-    let timeout = tokio::time::sleep(Duration::from_secs(2));
+    let timeout = tokio::time::sleep(Duration::from_secs(10));
+
     tokio::pin!(timeout);
 
     let server_addr = loop {

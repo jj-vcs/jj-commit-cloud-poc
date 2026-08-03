@@ -19,7 +19,21 @@ use std::time::SystemTime;
 const HASH_LENGTH: usize = 20;
 const CHANGE_ID_LENGTH: usize = 16;
 
+fn make_request<T>(payload: T) -> tonic::Request<T> {
+    let mut req = tonic::Request::new(payload);
+    if let Ok(token) = std::env::var("JJ_CC_AUTH_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            if let Ok(val) = format!("Bearer {}", token).parse() {
+                req.metadata_mut().insert("authorization", val);
+            }
+        }
+    }
+    req
+}
+
 fn run_async<F: std::future::Future + Send + 'static>(f: F) -> F::Output
+
 where
     F::Output: Send + 'static,
 {
@@ -77,10 +91,11 @@ impl CommitCloudBackend {
             run_async(async move {
                 let mut client = BackendServiceClient::connect(server_url_owned).await?;
                 let resp = client
-                    .register_repository(proto_backend::RegisterRepositoryRequest {
+                    .register_repository(make_request(proto_backend::RegisterRepositoryRequest {
                         repo_id: String::new(),
-                    })
+                    }))
                     .await?;
+
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(resp.into_inner().repo_id)
             })?
         };
@@ -178,10 +193,10 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .read_file(proto_backend::ReadFileRequest {
+                .read_file(make_request(proto_backend::ReadFileRequest {
                     repo_id,
                     file_id,
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -216,12 +231,13 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .write_file(proto_backend::WriteFileRequest {
+                .write_file(make_request(proto_backend::WriteFileRequest {
                     repo_id,
                     content: buffer,
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
+
 
             let file_id = FileId::from_bytes(&resp.into_inner().file_id);
             Ok(file_id)
@@ -264,11 +280,11 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .read_tree(proto_backend::ReadTreeRequest {
+                .read_tree(make_request(proto_backend::ReadTreeRequest {
                     repo_id,
                     tree_id,
                     path: path_str,
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -348,13 +364,14 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .write_tree(proto_backend::WriteTreeRequest {
+                .write_tree(make_request(proto_backend::WriteTreeRequest {
                     repo_id,
                     path: path_str,
                     entries: proto_entries,
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
+
 
             let tree_id = TreeId::from_bytes(&resp.into_inner().tree_id);
             Ok(tree_id)
@@ -379,10 +396,10 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .read_commit(proto_backend::ReadCommitRequest {
+                .read_commit(make_request(proto_backend::ReadCommitRequest {
                     repo_id,
                     commit_id,
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -491,12 +508,13 @@ impl Backend for CommitCloudBackend {
                 .map_err(|e| BackendError::Other(e.into()))?;
 
             let resp = client
-                .write_commit(proto_backend::WriteCommitRequest {
+                .write_commit(make_request(proto_backend::WriteCommitRequest {
                     repo_id,
                     commit: Some(proto_commit),
-                })
+                }))
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
+
 
             let commit_id_bytes = resp.into_inner().commit_id;
             let commit_id = CommitId::from_bytes(&commit_id_bytes);

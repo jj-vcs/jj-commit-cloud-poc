@@ -9,7 +9,21 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
 use std::time::SystemTime;
 
+fn make_request<T>(payload: T) -> tonic::Request<T> {
+    let mut req = tonic::Request::new(payload);
+    if let Ok(token) = std::env::var("JJ_CC_AUTH_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            if let Ok(val) = format!("Bearer {}", token).parse() {
+                req.metadata_mut().insert("authorization", val);
+            }
+        }
+    }
+    req
+}
+
 fn run_async<F: std::future::Future + Send + 'static>(f: F) -> F::Output
+
 where
     F::Output: Send + 'static,
 {
@@ -79,9 +93,10 @@ impl OpStore for CommitCloudOpStore {
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
             let resp = client
-                .read_view(proto_op::ReadViewRequest { repo_id, view_id })
+                .read_view(make_request(proto_op::ReadViewRequest { repo_id, view_id }))
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
+
 
             let proto_view = resp.into_inner().view.ok_or_else(|| {
                 OpStoreError::Other(Box::new(std::io::Error::new(
@@ -157,12 +172,13 @@ impl OpStore for CommitCloudOpStore {
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
             let resp = client
-                .write_view(proto_op::WriteViewRequest {
+                .write_view(make_request(proto_op::WriteViewRequest {
                     repo_id,
                     view: Some(proto_view),
-                })
+                }))
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
+
 
             let view_id = ViewId::from_bytes(&resp.into_inner().view_id);
             Ok(view_id)
@@ -206,12 +222,13 @@ impl OpStore for CommitCloudOpStore {
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
             let resp = client
-                .read_operation(proto_op::ReadOperationRequest {
+                .read_operation(make_request(proto_op::ReadOperationRequest {
                     repo_id,
                     operation_id,
-                })
+                }))
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
+
 
             let proto_op = resp.into_inner().operation.ok_or_else(|| {
                 OpStoreError::Other(Box::new(std::io::Error::new(
@@ -303,12 +320,13 @@ impl OpStore for CommitCloudOpStore {
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
             let resp = client
-                .write_operation(proto_op::WriteOperationRequest {
+                .write_operation(make_request(proto_op::WriteOperationRequest {
                     repo_id,
                     operation: Some(proto_op),
-                })
+                }))
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
+
 
             let op_id = OperationId::from_bytes(&resp.into_inner().operation_id);
             Ok(op_id)

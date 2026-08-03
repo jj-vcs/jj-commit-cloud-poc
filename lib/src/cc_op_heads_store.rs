@@ -6,7 +6,21 @@ use jj_lib::op_heads_store::*;
 use jj_lib::op_store::OperationId;
 use std::fmt::Debug;
 
+fn make_request<T>(payload: T) -> tonic::Request<T> {
+    let mut req = tonic::Request::new(payload);
+    if let Ok(token) = std::env::var("JJ_CC_AUTH_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            if let Ok(val) = format!("Bearer {}", token).parse() {
+                req.metadata_mut().insert("authorization", val);
+            }
+        }
+    }
+    req
+}
+
 fn run_async<F: std::future::Future + Send + 'static>(f: F) -> F::Output
+
 where
     F::Output: Send + 'static,
 {
@@ -76,18 +90,18 @@ impl OpHeadsStore for CommitCloudOpHeadsStore {
 
             for old_id in old_op_head_ids {
                 let _ = client
-                    .remove_op_head(proto_heads::RemoveOpHeadRequest {
+                    .remove_op_head(make_request(proto_heads::RemoveOpHeadRequest {
                         repo_id: repo_id.clone(),
                         op_head_id: old_id,
-                    })
+                    }))
                     .await;
             }
 
             client
-                .add_op_head(proto_heads::AddOpHeadRequest {
+                .add_op_head(make_request(proto_heads::AddOpHeadRequest {
                     repo_id,
                     op_head_id: new_op_head_id,
-                })
+                }))
                 .await
                 .map_err(|e| OpHeadsStoreError::Read(e.into()))?;
 
@@ -105,9 +119,10 @@ impl OpHeadsStore for CommitCloudOpHeadsStore {
                 .map_err(|e| OpHeadsStoreError::Read(e.into()))?;
 
             let resp = client
-                .get_op_heads(proto_heads::GetOpHeadsRequest { repo_id })
+                .get_op_heads(make_request(proto_heads::GetOpHeadsRequest { repo_id }))
                 .await
                 .map_err(|e| OpHeadsStoreError::Read(e.into()))?;
+
 
             let head_ids = resp
                 .into_inner()

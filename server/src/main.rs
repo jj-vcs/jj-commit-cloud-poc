@@ -321,6 +321,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     info!("jj-cc-server listening on {}", local_addr);
+    println!("jj-cc-server listening on {}", local_addr);
+
 
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
 
