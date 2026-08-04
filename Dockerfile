@@ -1,7 +1,7 @@
 # -------------------------------------------------------------
 # Stage 1: Build stage
 # -------------------------------------------------------------
-FROM rust:latest as builder
+FROM rust:bookworm as builder
 
 # Install protoc (required by tonic-build in cc-proto)
 RUN apt-get update && apt-get install -y protobuf-compiler libssl-dev pkg-config && rm -rf /var/lib/apt/lists/*
@@ -24,5 +24,7 @@ COPY --from=builder /app/target/release/jj-cc-server /usr/local/bin/jj-cc-server
 ENV PORT=8080
 EXPOSE 8080
 
-# Bind to 0.0.0.0 and listen on port 8080
-CMD ["sh", "-c", "jj-cc-server --host 0.0.0.0 --port ${PORT:-8080}"]
+# Bind to 0.0.0.0 and listen on port 8080 using Spanner database backend
+CMD ["sh", "-c", "jj-cc-server --host 0.0.0.0 --port ${PORT:-8080} --db-backend spanner --spanner-db projects/srachaba-jj-poc-sandbox/instances/jj-cc-spanner/databases/commit_cloud"]
+
+

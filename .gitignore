@@ -2,4 +2,4 @@
 **/*.rs.bk
 *.pdb
 *.db
-
+*.pending-snap

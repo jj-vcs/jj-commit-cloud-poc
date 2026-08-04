@@ -22,6 +22,10 @@ hex = "0.4"
 sled = "0.34"
 rusqlite = { version = "0.31", features = ["bundled"] }
 prost = "0.13"
+google-cloud-spanner = "0.34.4-preview"
+
+
+
 
 
 [dev-dependencies]

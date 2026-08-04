@@ -7,7 +7,7 @@ use cc_proto::op_heads_store::*;
 use cc_proto::op_store::op_store_service_server::{OpStoreService, OpStoreServiceServer};
 use cc_proto::op_store::*;
 use clap::{Parser, ValueEnum};
-use db::{DatabaseStore, MemoryStore, SqliteStore};
+use db::{DatabaseStore, MemoryStore, SpannerStore, SqliteStore};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tonic::transport::Server;
@@ -20,6 +20,7 @@ pub enum DbBackendType {
     Memory,
     #[default]
     Sqlite,
+    Spanner,
 }
 
 #[derive(Parser, Debug)]
@@ -33,14 +34,19 @@ struct Args {
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
 
-    /// Database backend to use (sqlite, memory)
+    /// Database backend to use (sqlite, memory, spanner)
     #[arg(long, value_enum, default_value_t = DbBackendType::Sqlite)]
     db_backend: DbBackendType,
 
     /// Path to SQLite database file (defaults to ~/.jj-cc-server/commit_cloud.db)
     #[arg(long)]
     db_path: Option<String>,
+
+    /// Full GCP Spanner database path (projects/<proj>/instances/<inst>/databases/<db>)
+    #[arg(long, default_value = "projects/srachaba-jj-poc-sandbox/instances/jj-cc-spanner/databases/commit_cloud")]
+    spanner_db: String,
 }
+
 
 fn get_default_db_path() -> String {
     if let Some(home) = std::env::var_os("HOME") {
@@ -316,9 +322,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Opening SQLite Database Store at '{}'", path);
             Arc::new(SqliteStore::open(&path)?)
         }
-
-
+        DbBackendType::Spanner => {
+            info!("Connecting to Google Cloud Spanner Store at '{}'", args.spanner_db);
+            Arc::new(SpannerStore::connect(&args.spanner_db).await?)
+        }
     };
+
 
     info!("jj-cc-server listening on {}", local_addr);
     println!("jj-cc-server listening on {}", local_addr);

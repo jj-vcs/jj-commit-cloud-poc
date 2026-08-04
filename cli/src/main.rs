@@ -69,6 +69,8 @@ fn parse_config(config_str: &str) -> Result<(String, String), std::io::Error> {
 }
 
 fn main() -> ExitCode {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // If the first argument is "cc", handle cc subcommands
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "cc" {
