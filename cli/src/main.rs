@@ -30,7 +30,10 @@ enum CcSubcommand {
 enum CcCommands {
     /// Initialize a remote Commit Cloud repository and local working copy
     Init(commands::init::CcInitArgs),
+    /// Import an existing Git repository into Commit Cloud
+    ImportGit(commands::import_git::ImportGitArgs),
 }
+
 
 fn get_config_path(store_path: &Path) -> PathBuf {
     let direct = store_path.join("config.toml");
@@ -84,7 +87,16 @@ fn main() -> ExitCode {
                 CcCommands::Init(ref init_args) => {
                     return rt.block_on(commands::init::cmd_cc_init(init_args));
                 }
+                CcCommands::ImportGit(ref import_args) => {
+                    return rt.block_on(commands::import_git::cmd_import_git(import_args))
+                        .map(|_| ExitCode::SUCCESS)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            ExitCode::FAILURE
+                        });
+                }
             },
+
         }
     }
 
