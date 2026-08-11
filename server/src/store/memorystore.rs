@@ -1,4 +1,5 @@
 use cc_common::backend::*;
+use cc_common::op_store::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -6,6 +7,8 @@ pub type RepoId = String;
 pub type CommitId = Vec<u8>;
 pub type TreeId = Vec<u8>;
 pub type FileId = Vec<u8>;
+pub type OpId = Vec<u8>;
+pub type ViewId = Vec<u8>;
 
 #[derive(Debug, Default)]
 pub struct MemoryStore {
@@ -13,6 +16,9 @@ pub struct MemoryStore {
     pub commits: Mutex<HashMap<RepoId, HashMap<CommitId, Commit>>>,
     pub trees: Mutex<HashMap<RepoId, HashMap<TreeId, Vec<TreeEntry>>>>,
     pub files: Mutex<HashMap<RepoId, HashMap<FileId, Vec<u8>>>>,
+    pub ops: Mutex<HashMap<RepoId, HashMap<OpId, Operation>>>,
+    pub views: Mutex<HashMap<RepoId, HashMap<ViewId, View>>>,
+    pub op_heads: Mutex<HashMap<RepoId, Vec<OpId>>>,
 }
 
 impl MemoryStore {
