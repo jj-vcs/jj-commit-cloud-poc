@@ -14,19 +14,7 @@ use std::pin::Pin;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CommitCloudConfig {
-    pub server_url: String,
-    pub repo_id: String,
-}
-
-impl CommitCloudConfig {
-    pub fn load_from_store(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let config_path = store_path.join("config.toml");
-        let content = fs::read_to_string(&config_path)?;
-        Ok(toml::from_str(&content)?)
-    }
-}
+use crate::util::{run_async, CommitCloudConfig};
 
 #[derive(Debug)]
 pub struct CommitCloudBackend {
@@ -35,25 +23,6 @@ pub struct CommitCloudBackend {
     root_commit_id: CommitId,
     root_change_id: ChangeId,
     empty_tree_id: TreeId,
-}
-
-// TODO: Replace run_async function with a persistent gRPC channel connection in the
-// CommitCloudBackend trait. Member functions should check if connection exists otherwise create
-// one. 
-fn run_async<F, Fut, T>(f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
-    T: Send + 'static,
-{
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(f())
-    })
-    .join()
-    .map_err(|e| format!("Thread join error: {:?}", e))?
 }
 
 impl CommitCloudBackend {

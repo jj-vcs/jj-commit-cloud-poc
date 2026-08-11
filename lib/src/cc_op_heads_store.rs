@@ -4,7 +4,7 @@ use jj_lib::op_store::OperationId;
 use std::fmt::Debug;
 use std::path::Path;
 
-use crate::cc_backend::CommitCloudConfig;
+use crate::util::{CommitCloudConfig, run_async};
 
 #[derive(Debug)]
 pub struct CommitCloudOpHeadsStore {

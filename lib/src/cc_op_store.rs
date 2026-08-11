@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::cc_backend::CommitCloudConfig;
+use crate::util::{CommitCloudConfig, run_async};
 
 #[derive(Debug)]
 pub struct CommitCloudOpStore {
