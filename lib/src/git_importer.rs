@@ -53,12 +53,12 @@ impl GitImporter {
             .or_else(|_| gix::discover(&self.git_dir))
             .map_err(|e| format!("Failed to open Git repository at {:?}: {e}", self.git_dir))?;
 
-        let mut backend_client = BackendServiceClient::connect(self.server_url.clone())
+        let mut backend_client = crate::util::connect_backend_client(self.server_url.clone())
             .await
             .map_err(|e| format!("Failed to connect to backend service: {e}"))?;
 
-        let mut op_client = OpStoreServiceClient::connect(self.server_url.clone()).await?;
-        let mut op_heads_client = OpHeadsStoreServiceClient::connect(self.server_url.clone()).await?;
+        let mut op_client = crate::util::connect_op_store_client(self.server_url.clone()).await?;
+        let mut op_heads_client = crate::util::connect_op_heads_client(self.server_url.clone()).await?;
 
         // 1. Register or verify target repository on server
         let reg_res = backend_client

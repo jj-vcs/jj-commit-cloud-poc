@@ -84,7 +84,7 @@ impl OpHeadsStore for CommitCloudOpHeadsStore {
         let old_op_head_ids: Vec<Vec<u8>> = old_ids.iter().map(|i| i.as_bytes().to_vec()).collect();
 
         run_async(async move {
-            let mut client = OpHeadsStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_heads_client(server_url)
                 .await
                 .map_err(|e| OpHeadsStoreError::Read(e.into()))?;
 
@@ -114,7 +114,7 @@ impl OpHeadsStore for CommitCloudOpHeadsStore {
         let repo_id = self.repo_id.clone();
 
         run_async(async move {
-            let mut client = OpHeadsStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_heads_client(server_url)
                 .await
                 .map_err(|e| OpHeadsStoreError::Read(e.into()))?;
 

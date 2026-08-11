@@ -89,7 +89,7 @@ impl CommitCloudBackend {
             let server_url_owned = server_url.to_string();
 
             run_async(async move {
-                let mut client = BackendServiceClient::connect(server_url_owned).await?;
+                let mut client = crate::util::connect_backend_client(server_url_owned).await?;
                 let resp = client
                     .register_repository(make_request(proto_backend::RegisterRepositoryRequest {
                         repo_id: String::new(),
@@ -188,7 +188,7 @@ impl Backend for CommitCloudBackend {
         let file_id = id.as_bytes().to_vec();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -226,7 +226,7 @@ impl Backend for CommitCloudBackend {
         let repo_id = self.repo_id.clone();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -275,7 +275,7 @@ impl Backend for CommitCloudBackend {
         let path_str = path.as_internal_file_string().to_string();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -359,7 +359,7 @@ impl Backend for CommitCloudBackend {
         let path_str = path.as_internal_file_string().to_string();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -391,7 +391,7 @@ impl Backend for CommitCloudBackend {
         let commit_id = id.as_bytes().to_vec();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -503,7 +503,7 @@ impl Backend for CommitCloudBackend {
         let repo_id = self.repo_id.clone();
 
         run_async(async move {
-            let mut client = BackendServiceClient::connect(server_url)
+            let mut client = crate::util::connect_backend_client(server_url)
                 .await
                 .map_err(|e| BackendError::Other(e.into()))?;
 

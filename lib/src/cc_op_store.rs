@@ -88,7 +88,7 @@ impl OpStore for CommitCloudOpStore {
         let view_id = id.as_bytes().to_vec();
 
         let res: OpStoreResult<View> = run_async(async move {
-            let mut client = OpStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_store_client(server_url)
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
@@ -167,7 +167,7 @@ impl OpStore for CommitCloudOpStore {
         };
 
         run_async(async move {
-            let mut client = OpStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_store_client(server_url)
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
@@ -217,7 +217,7 @@ impl OpStore for CommitCloudOpStore {
         let operation_id = id.as_bytes().to_vec();
 
         run_async(async move {
-            let mut client = OpStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_store_client(server_url)
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
@@ -315,7 +315,7 @@ impl OpStore for CommitCloudOpStore {
         };
 
         run_async(async move {
-            let mut client = OpStoreServiceClient::connect(server_url)
+            let mut client = crate::util::connect_op_store_client(server_url)
                 .await
                 .map_err(|e| OpStoreError::Other(e.into()))?;
 
