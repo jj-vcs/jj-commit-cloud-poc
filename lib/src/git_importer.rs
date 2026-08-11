@@ -9,7 +9,8 @@ use cc_proto::op_store::op_store_service_client::OpStoreServiceClient;
 use cc_proto::op_store::{
     Operation, OperationMetadata, View, WriteOperationRequest, WriteViewRequest,
 };
-use std::collections::HashMap;
+use futures::StreamExt;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -166,6 +167,71 @@ impl GitImporter {
             commits_to_process.push(info.id);
         }
         commits_to_process.reverse(); // Bottom-up processing
+
+        //println!("⚡ Scanning repository trees and blobs across {} commits...", commits_to_process.len());
+
+        // Pre-scan all unique blobs across all commits
+        let mut unique_blob_oids = HashSet::new();
+        let mut tree_oids_to_scan = Vec::new();
+        for &commit_oid in &commits_to_process {
+            if let Ok(object) = repo.find_object(commit_oid) {
+                let commit_ref = object.to_commit_ref();
+                tree_oids_to_scan.push(commit_ref.tree());
+            }
+        }
+
+        let mut visited_trees = HashSet::new();
+        while let Some(tree_oid) = tree_oids_to_scan.pop() {
+            if !visited_trees.insert(tree_oid) {
+                continue;
+            }
+            if let Ok(tree_obj) = repo.find_object(tree_oid) {
+                if let Ok(tree_ref) = gix::objs::TreeRef::from_bytes(&tree_obj.data, tree_oid.kind()) {
+                    for entry in tree_ref.entries {
+                        if entry.mode.is_tree() {
+                            tree_oids_to_scan.push(entry.oid.to_owned());
+                        } else if !entry.mode.is_link() {
+                            unique_blob_oids.insert(entry.oid.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+
+        //println!("🚀 Uploading {} unique file blobs in parallel...", unique_blob_oids.len());
+
+        // Prepare blob payloads for parallel upload
+        let mut blobs_to_upload = Vec::new();
+        for blob_oid in unique_blob_oids {
+            if let Ok(blob_obj) = repo.find_object(blob_oid) {
+                blobs_to_upload.push((blob_oid, blob_obj.data.to_vec()));
+            }
+        }
+
+        // Upload file blobs concurrently using 32 parallel workers over multiplexed gRPC HTTP/2 channel
+        let upload_stream = futures::stream::iter(blobs_to_upload.into_iter().map(|(blob_oid, content)| {
+            let mut client = backend_client.clone();
+            let r_id = repo_id.clone();
+            async move {
+                let write_res = client
+                    .write_file(make_request(WriteFileRequest {
+                        repo_id: r_id,
+                        content,
+                    }))
+                    .await?
+                    .into_inner();
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>((blob_oid, write_res.file_id))
+            }
+        }))
+        .buffer_unordered(32);
+
+        let uploaded_blobs: Vec<Result<(gix::hash::ObjectId, Vec<u8>), _>> = upload_stream.collect().await;
+        for res in uploaded_blobs {
+            let (blob_oid, file_id) = res?;
+            blob_map.insert(blob_oid, file_id);
+        }
+
+        //println!("✅ Blobs uploaded. Processing trees and commits...");
 
         for commit_oid in commits_to_process {
             let object = repo.find_object(commit_oid)?;
