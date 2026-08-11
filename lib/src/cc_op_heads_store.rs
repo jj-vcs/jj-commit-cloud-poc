@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use jj_lib::op_heads_store::{OpHeadsStore, OpHeadsStoreError, OpHeadsStoreLock};
 use jj_lib::op_store::OperationId;
 
-use crate::cc_backend::CommitCloudConfig;
+use crate::util::{run_async, CommitCloudConfig};
 
 #[derive(Debug)]
 pub struct CommitCloudOpHeadsStore {

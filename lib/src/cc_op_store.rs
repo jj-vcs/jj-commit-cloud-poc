@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use jj_lib::object_id::{HexPrefix, ObjectId, PrefixResolution};
 use jj_lib::op_store::{OpStore, OpStoreResult, Operation, OperationId, View, ViewId};
 
-use crate::cc_backend::CommitCloudConfig;
+use crate::util::{run_async, CommitCloudConfig};
 
 #[derive(Debug)]
 pub struct CommitCloudOpStore {
