@@ -1,5 +1,17 @@
 const EMPTY_STRING_PLACEHOLDER: &str = "JJ_EMPTY_STRING";
 
+/// Appends a byte slice preceded by its 8-byte length prefix to prevent boundary hash collisions (e.g. "foo"+"bar" vs "foob"+"ar").
+// Matches length-prefixed hashing used internally at Google
+fn append_length_prefixed_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    buf.extend_from_slice(bytes);
+}
+
+/// Appends a UTF-8 string slice preceded by its length prefix.
+fn append_length_prefixed_str(buf: &mut Vec<u8>, s: &str) {
+    append_length_prefixed_bytes(buf, s.as_bytes());
+}
+
 fn signature_to_git(sig: Option<&cc_common::backend::Signature>) -> gix::actor::Signature {
     let (name, email) = match sig {
         Some(s) => (
@@ -128,4 +140,86 @@ pub fn compute_git_tree_hash(entries: &[cc_common::backend::TreeEntry]) -> Vec<u
 
     let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Tree, &buf);
     hash.as_bytes().to_vec()
+}
+
+/// Computes a unique SHA-1 OperationId hash.
+pub fn hash_operation(op: &cc_common::op_store::Operation) -> Vec<u8> {
+    let mut buf = Vec::new();
+    append_length_prefixed_bytes(&mut buf, &op.view_id);
+    for p in &op.parents {
+        append_length_prefixed_bytes(&mut buf, p);
+    }
+    if let Some(meta) = &op.metadata {
+        buf.extend_from_slice(&meta.start_time_millis.to_le_bytes());
+        buf.extend_from_slice(&meta.end_time_millis.to_le_bytes());
+        append_length_prefixed_str(&mut buf, &meta.description);
+        append_length_prefixed_str(&mut buf, &meta.hostname);
+        append_length_prefixed_str(&mut buf, &meta.username);
+        buf.extend_from_slice(&(meta.is_snapshot as u8).to_le_bytes());
+        if let Some(ws) = &meta.workspace_name {
+            append_length_prefixed_str(&mut buf, ws);
+        }
+        let sorted_attrs: std::collections::BTreeMap<_, _> = meta.attributes.iter().collect();
+        for (k, v) in sorted_attrs {
+            append_length_prefixed_str(&mut buf, k);
+            append_length_prefixed_str(&mut buf, v);
+        }
+    }
+    for pred in &op.commit_predecessors {
+        append_length_prefixed_bytes(&mut buf, &pred.commit_id);
+        for p_id in &pred.predecessor_ids {
+            append_length_prefixed_bytes(&mut buf, p_id);
+        }
+    }
+    let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, &buf);
+    hash.as_bytes()[..cc_common::OPERATION_ID_LENGTH].to_vec()
+}
+
+/// Computes a unique SHA-1 ViewId hash.
+pub fn hash_view(view: &cc_common::op_store::View) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut head_ids = view.head_ids.clone();
+    head_ids.sort();
+    for head in &head_ids {
+        append_length_prefixed_bytes(&mut buf, head);
+    }
+
+    let sorted_wc: std::collections::BTreeMap<_, _> = view.wc_commit_ids.iter().collect();
+    for (k, v) in sorted_wc {
+        append_length_prefixed_str(&mut buf, k);
+        append_length_prefixed_bytes(&mut buf, v);
+    }
+
+    let append_ref_target = |buf: &mut Vec<u8>, target: &cc_common::op_store::RefTarget| {
+        let mut removes: Vec<_> = target.removes.iter().map(|t| &t.commit_id).collect();
+        removes.sort();
+        for commit_id in removes {
+            append_length_prefixed_bytes(buf, commit_id);
+        }
+        let mut adds: Vec<_> = target.adds.iter().map(|t| &t.commit_id).collect();
+        adds.sort();
+        for commit_id in adds {
+            append_length_prefixed_bytes(buf, commit_id);
+        }
+    };
+
+    let sorted_bookmarks: std::collections::BTreeMap<_, _> =
+        view.local_bookmarks.iter().collect();
+    for (name, target) in sorted_bookmarks {
+        append_length_prefixed_str(&mut buf, name);
+        append_ref_target(&mut buf, target);
+    }
+
+    let sorted_remotes: std::collections::BTreeMap<_, _> =
+        view.remote_bookmarks.iter().collect();
+    for (name, remote_ref) in sorted_remotes {
+        append_length_prefixed_str(&mut buf, name);
+        buf.extend_from_slice(&(remote_ref.is_tracked as u8).to_le_bytes());
+        if let Some(target) = &remote_ref.target {
+            append_ref_target(&mut buf, target);
+        }
+    }
+
+    let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, &buf);
+    hash.as_bytes()[..cc_common::VIEW_ID_LENGTH].to_vec()
 }
