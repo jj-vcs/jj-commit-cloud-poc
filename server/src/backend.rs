@@ -1,23 +1,24 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::Arc;
 use tracing::info;
 
 use cc_common::backend::backend_service_server::BackendService;
 use cc_common::backend::*;
 
 use crate::hash_utils::{compute_git_blob_hash, compute_git_commit_hash, compute_git_tree_hash};
+use crate::store::MemoryStore;
 
-#[derive(Debug, Default)]
-pub struct CommitCloudServerImpl {
-    repos: Mutex<HashSet<String>>,
-    commits: Mutex<HashMap<String, HashMap<Vec<u8>, Commit>>>,
-    trees: Mutex<HashMap<String, HashMap<Vec<u8>, Vec<TreeEntry>>>>,
-    files: Mutex<HashMap<String, HashMap<Vec<u8>, Vec<u8>>>>,
+#[derive(Debug, Clone)]
+pub struct CommitCloudBackendService {
+    store: Arc<MemoryStore>,
 }
 
-impl CommitCloudServerImpl {
+impl CommitCloudBackendService {
+    pub fn new(store: Arc<MemoryStore>) -> Self {
+        Self { store }
+    }
+
     fn ensure_repo_registered_error(&self, repo_id: &str, action: &str) -> Result<(), tonic::Status> {
-        if !self.repos.lock().unwrap().contains(repo_id) {
+        if !self.store.repos.lock().unwrap().contains(repo_id) {
             return Err(tonic::Status::not_found(format!(
                 "repository should have been registered before {action}"
             )));
@@ -27,14 +28,14 @@ impl CommitCloudServerImpl {
 }
 
 #[tonic::async_trait]
-impl BackendService for CommitCloudServerImpl {
+impl BackendService for CommitCloudBackendService {
     async fn register_repository(
         &self,
         request: tonic::Request<RegisterRepositoryRequest>,
     ) -> Result<tonic::Response<RegisterRepositoryResponse>, tonic::Status> {
         let req = request.into_inner();
         info!("Registering repository: {}", req.repo_id);
-        let mut repos = self.repos.lock().unwrap();
+        let mut repos = self.store.repos.lock().unwrap();
         repos.insert(req.repo_id.clone());
         Ok(tonic::Response::new(RegisterRepositoryResponse {
             repo_id: req.repo_id,
@@ -51,7 +52,7 @@ impl BackendService for CommitCloudServerImpl {
 
         self.ensure_repo_registered_error(&repo_id, "requesting commits")?;
 
-        let commits = self.commits.lock().unwrap();
+        let commits = self.store.commits.lock().unwrap();
         if let Some(repo_commits) = commits.get(&repo_id) {
             if let Some(commit) = repo_commits.get(&commit_id) {
                 return Ok(tonic::Response::new(ReadCommitResponse {
@@ -80,7 +81,7 @@ impl BackendService for CommitCloudServerImpl {
         commit.commit_id = commit_id.clone();
         info!("Writing commit {:?} for repo {}", commit_id, repo_id);
 
-        let mut commits = self.commits.lock().unwrap();
+        let mut commits = self.store.commits.lock().unwrap();
         let repo_commits = commits.entry(repo_id).or_default();
         repo_commits.insert(commit_id.clone(), commit);
 
@@ -104,7 +105,7 @@ impl BackendService for CommitCloudServerImpl {
             }));
         }
 
-        let trees = self.trees.lock().unwrap();
+        let trees = self.store.trees.lock().unwrap();
         if let Some(repo_trees) = trees.get(&repo_id) {
             if let Some(entries) = repo_trees.get(&tree_id) {
                 return Ok(tonic::Response::new(ReadTreeResponse {
@@ -127,7 +128,7 @@ impl BackendService for CommitCloudServerImpl {
 
         let tree_id = compute_git_tree_hash(&req.entries);
 
-        let mut trees = self.trees.lock().unwrap();
+        let mut trees = self.store.trees.lock().unwrap();
         let repo_trees = trees.entry(repo_id).or_default();
         repo_trees.insert(tree_id.clone(), req.entries);
 
@@ -146,7 +147,7 @@ impl BackendService for CommitCloudServerImpl {
 
         self.ensure_repo_registered_error(&repo_id, "reading files")?;
 
-        let files = self.files.lock().unwrap();
+        let files = self.store.files.lock().unwrap();
         let content = files
             .get(&repo_id)
             .and_then(|repo_files| repo_files.get(&file_id))
@@ -174,7 +175,7 @@ impl BackendService for CommitCloudServerImpl {
 
         let file_id = compute_git_blob_hash(&req.content);
 
-        let mut files = self.files.lock().unwrap();
+        let mut files = self.store.files.lock().unwrap();
         let repo_files = files.entry(repo_id).or_default();
         repo_files.insert(file_id.clone(), req.content);
 
