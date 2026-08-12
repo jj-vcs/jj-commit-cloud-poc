@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tonic::transport::Server;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -8,8 +9,10 @@ use cc_common::backend::backend_service_server::BackendServiceServer;
 
 mod backend;
 mod hash_utils;
+pub mod store;
 
-pub use backend::CommitCloudServerImpl;
+use backend::CommitCloudBackendService;
+use store::MemoryStore;
 
 #[derive(Parser, Debug)]
 #[command(name = "jj-cc-server", about = "Jujutsu Commit Cloud Server")]
@@ -21,6 +24,18 @@ struct Args {
     /// Port to listen on (use 0 for ephemeral port assignment)
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+}
+
+pub struct CommitCloudServerImpl {
+    pub store: Arc<MemoryStore>,
+}
+
+impl Default for CommitCloudServerImpl {
+    fn default() -> Self {
+        Self {
+            store: Arc::new(MemoryStore::default()),
+        }
+    }
 }
 
 #[tokio::main]
@@ -46,11 +61,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("jj-cc-server listening on {}", local_addr);
 
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-    let service = CommitCloudServerImpl::default();
+    let server_impl = CommitCloudServerImpl::default();
+    let backend_service = CommitCloudBackendService::new(server_impl.store.clone());
 
     Server::builder()
         .add_service(health_service)
-        .add_service(BackendServiceServer::new(service))
+        .add_service(BackendServiceServer::new(backend_service))
         .serve_with_incoming_shutdown(incoming, async {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
