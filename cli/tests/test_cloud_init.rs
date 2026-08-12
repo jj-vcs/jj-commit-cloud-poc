@@ -1,30 +1,9 @@
 use std::fs;
-use tempfile::tempdir;
 
 #[tokio::test]
 async fn test_cloud_init_integration() {
-    // Spawn jj-cc-server using the shared dynamic port test harness
-    let server = testutils::spawn_server().await;
-
-    // Execute jj cc init inside a temporary test workspace
-    let temp_dir = tempdir().expect("temporary directory should have been created for testing");
-    let repo_path = temp_dir.path();
-
-    let mut cmd = assert_cmd::Command::cargo_bin("jj")
-        .expect("The jj CLI binary should have compiled");
-
-    cmd.current_dir(repo_path)
-        .args([
-            "cc",
-            "init",
-            "--server",
-            server.url(),
-            "--create",
-            ".",
-        ]);
-
-    // Assert CLI execution is successful
-    cmd.assert().success();
+    let workspace = testutils::TestWorkspace::init().await;
+    let repo_path = workspace.repo_path();
 
     // Verify local Jujutsu metadata directory structure
     let jj_store_path = repo_path.join(".jj/repo/store");
@@ -46,7 +25,7 @@ async fn test_cloud_init_integration() {
     let server_url = parsed_config.get("server_url")
         .and_then(|v| v.as_str())
         .expect("The server_url field should exist and be a string");
-    assert_eq!(server_url, server.url());
+    assert_eq!(server_url, workspace.server_url());
 
     let repo_id_str = parsed_config.get("repo_id")
         .and_then(|v| v.as_str())
@@ -59,25 +38,8 @@ async fn test_cloud_init_integration() {
 
 #[tokio::test]
 async fn test_cloud_init_repo_registered() {
-    let server = testutils::spawn_server().await;
-
-    let temp_dir = tempdir().expect("temporary directory should have been created for testing");
-    let repo_path = temp_dir.path();
-
-    let mut cmd = assert_cmd::Command::cargo_bin("jj")
-        .expect("The jj CLI binary should have compiled");
-
-    cmd.current_dir(repo_path)
-        .args([
-            "cc",
-            "init",
-            "--server",
-            server.url(),
-            "--create",
-            ".",
-        ]);
-
-    cmd.assert().success();
+    let workspace = testutils::TestWorkspace::init().await;
+    let repo_path = workspace.repo_path();
 
     let jj_store_path = repo_path.join(".jj/repo/store");
     let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
@@ -89,7 +51,7 @@ async fn test_cloud_init_repo_registered() {
         .expect("The repo_id field should exist and be a string");
 
     // Verify that the repository was actually registered in the cloud server over gRPC
-    let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server.url().to_string())
+    let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(workspace.server_url().to_string())
         .await
         .expect("gRPC connection to test server should have succeeded");
 

@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 tokio = { version = "1.39", features = ["process", "io-util", "rt", "time"] }
 assert_cmd = "2.0"
+tempfile = "3.10"

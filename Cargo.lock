@@ -5084,6 +5084,7 @@ name = "testutils"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "tempfile",
  "tokio",
 ]
 
