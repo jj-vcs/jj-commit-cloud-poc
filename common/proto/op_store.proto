@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package commit_cloud.op_store;
+
+// Service interface for remote Operation Store and OpHeads Store RPCs
+// Used by clients to query operations, save repository views, and update operation heads
+service OpStoreService {
+  // RPCs for reading and writing operation log entries
+  // An operation is a single step in time (like running `jj describe`), making history undoable
+  rpc ReadOperation (ReadOperationRequest) returns (ReadOperationResponse);
+  rpc WriteOperation (WriteOperationRequest) returns (WriteOperationResponse);
+
+  // RPCs for reading and writing repository view objects
+  // A view is a picture of the repo state, recording active workspace commits and bookmark pointers
+  rpc ReadView (ReadViewRequest) returns (ReadViewResponse);
+  rpc WriteView (WriteViewRequest) returns (WriteViewResponse);
+
+  // RPCs for reading and updating active operation heads
+  // OpHeads track the latest operations in the graph, used to find current state or resolve branch conflicts
+  rpc GetOpHeads (GetOpHeadsRequest) returns (GetOpHeadsResponse);
+  rpc UpdateOpHeads (UpdateOpHeadsRequest) returns (UpdateOpHeadsResponse);
+}
+
+// Messages for reading and writing operation log entries
+// Used when fetching operation details during `jj op log` or saving a new transaction operation
+message ReadOperationRequest {
+  string repo_id = 1;
+  bytes operation_id = 2;
+}
+
+message ReadOperationResponse {
+  Operation operation = 1;
+}
+
+message WriteOperationRequest {
+  string repo_id = 1;
+  Operation operation = 2;
+}
+
+message WriteOperationResponse {
+  bytes operation_id = 1;
+}
+
+// Messages for reading and writing repository view objects
+// Used when looking up workspace heads, local/remote bookmarks, and tags for a given operation
+message ReadViewRequest {
+  string repo_id = 1;
+  bytes view_id = 2;
+}
+
+message ReadViewResponse {
+  bytes view_id = 1;
+  View view = 2;
+}
+
+message WriteViewRequest {
+  string repo_id = 1;
+  View view = 2;
+}
+
+message WriteViewResponse {
+  bytes view_id = 1;
+}
+
+// Messages for querying and updating active operation heads
+// Used to discover current branch heads or update operation head pointers after a transaction
+message GetOpHeadsRequest {
+  string repo_id = 1;
+}
+
+message GetOpHeadsResponse {
+  repeated bytes op_head_ids = 1;
+}
+
+message UpdateOpHeadsRequest {
+  string repo_id = 1;
+  repeated bytes old_op_head_ids = 2;
+  bytes new_op_head_id = 3;
+}
+
+message UpdateOpHeadsResponse {
+  repeated bytes current_op_head_ids = 1;
+}
+
+// Messages representing Operation metadata and graph structure
+// Stores start/end time, username, hostname, and parent operations to build the undo history graph
+// Server needs to hash attributes in sorted or deterministic way
+message OperationMetadata {
+  int64 start_time_millis = 1;
+  int64 end_time_millis = 2;
+  string description = 3;
+  bool is_snapshot = 4;
+  optional string workspace_name = 5;
+  string hostname = 6;
+  string username = 7;
+  map<string, string> attributes = 8;
+}
+
+message CommitPredecessors {
+  bytes commit_id = 1;
+  repeated bytes predecessor_ids = 2;
+}
+
+message Operation {
+  bytes view_id = 1;
+  repeated bytes parents = 2;
+  OperationMetadata metadata = 3;
+  repeated CommitPredecessors commit_predecessors = 4;
+  bool commit_predecessors_set = 5;
+}
+
+// Messages representing RefTarget, Bookmarks, and Views
+// Bookmarks are named labels (like `main`), while RefTargets record added/removed commits to track bookmark conflicts
+message RefTargetTerm {
+  bytes commit_id = 1;
+}
+
+message RefTarget {
+  repeated RefTargetTerm removes = 1;
+  repeated RefTargetTerm adds = 2;
+}
+
+message RemoteRef {
+  RefTarget target = 1;
+  bool is_tracked = 2;
+}
+
+// We use Protobuf map fields to cleanly represent key-value mappings (Google internal does this)
+// git fields (git_refs, git heads, etc) in upstream Views proto are omitted here
+// Protobuf map serialization is in non-deterministic order for key-value pairs
+// The server MUST perform key-sorted (or some other deterministic) hashing scheme to generate view_id
+message View {
+  repeated bytes head_ids = 1;
+  map<string, bytes> wc_commit_ids = 2;
+  map<string, RefTarget> local_bookmarks = 3;
+  map<string, RemoteRef> remote_bookmarks = 4;
+}
