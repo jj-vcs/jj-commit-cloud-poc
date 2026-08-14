@@ -42,7 +42,10 @@ impl Default for CommitCloudServerImpl {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::EnvFilter::from_default_env().add_directive("jj_cc_server=info".parse()?))
+        .with(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("jj_cc_server=info".parse()?),
+        )
         .init();
 
     let args = Args::parse();
@@ -70,7 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Shutdown signal received, shutting down gracefully...");
                 }
                 Err(e) => {
-                    warn!("Failed to listen for shutdown signal: {}, shutting down...", e);
+                    warn!(
+                        "Failed to listen for shutdown signal: {}, shutting down...",
+                        e
+                    );
                 }
             }
         })

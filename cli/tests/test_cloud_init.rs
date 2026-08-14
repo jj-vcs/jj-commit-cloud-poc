@@ -7,7 +7,10 @@ async fn test_cc_init_command_creates_local_workspace() {
 
     // Verify local Jujutsu metadata directory structure
     let jj_store_path = repo_path.join(".jj/repo/store");
-    assert!(jj_store_path.exists(), "The .jj/repo/store directory should exist");
+    assert!(
+        jj_store_path.exists(),
+        "The .jj/repo/store directory should exist"
+    );
 
     // Verify backend type selection file
     let store_type = fs::read_to_string(jj_store_path.join("type"))
@@ -18,22 +21,23 @@ async fn test_cc_init_command_creates_local_workspace() {
     let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
         .expect("The config.toml file should be readable");
 
-    let parsed_config: toml::Value = toml::from_str(&config_content)
-        .expect("The config.toml file should be valid TOML");
+    let parsed_config: toml::Value =
+        toml::from_str(&config_content).expect("The config.toml file should be valid TOML");
 
     // Verify correct parameters are serialized
-    let server_url = parsed_config.get("server_url")
+    let server_url = parsed_config
+        .get("server_url")
         .and_then(|v| v.as_str())
         .expect("The server_url field should exist and be a string");
     assert_eq!(server_url, workspace.server_url());
 
-    let repo_id_str = parsed_config.get("repo_id")
+    let repo_id_str = parsed_config
+        .get("repo_id")
         .and_then(|v| v.as_str())
         .expect("The repo_id field should exist and be a string");
 
     // Validate the repo_id string is a valid UUID
-    uuid::Uuid::parse_str(repo_id_str)
-        .expect("The repo_id should be a valid UUID string");
+    uuid::Uuid::parse_str(repo_id_str).expect("The repo_id should be a valid UUID string");
 }
 
 #[tokio::test]
@@ -44,16 +48,19 @@ async fn test_cc_init_command_registers_repository() {
     let jj_store_path = repo_path.join(".jj/repo/store");
     let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
         .expect("The config.toml file should be readable");
-    let parsed_config: toml::Value = toml::from_str(&config_content)
-        .expect("The config.toml file should be valid TOML");
-    let repo_id_str = parsed_config.get("repo_id")
+    let parsed_config: toml::Value =
+        toml::from_str(&config_content).expect("The config.toml file should be valid TOML");
+    let repo_id_str = parsed_config
+        .get("repo_id")
         .and_then(|v| v.as_str())
         .expect("The repo_id field should exist and be a string");
 
     // Verify that the repository was actually registered in the cloud server over gRPC
-    let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(workspace.server_url().to_string())
-        .await
-        .expect("gRPC connection to test server should have succeeded");
+    let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(
+        workspace.server_url().to_string(),
+    )
+    .await
+    .expect("gRPC connection to test server should have succeeded");
 
     let request = tonic::Request::new(cc_common::backend::ReadCommitRequest {
         repo_id: repo_id_str.to_string(),
@@ -70,8 +77,8 @@ async fn test_cc_init_command_registers_repository() {
 
 #[tokio::test]
 async fn test_cc_init_failure_invalid_server_addr() {
-    let mut cmd = assert_cmd::Command::cargo_bin("jj")
-        .expect("The jj CLI binary should have compiled");
+    let mut cmd =
+        assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled");
 
     cmd.args([
         "cc",

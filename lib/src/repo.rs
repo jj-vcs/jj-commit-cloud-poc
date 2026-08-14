@@ -11,7 +11,8 @@ impl StoreFactoriesExt for StoreFactories {
         self.add_backend(
             "commit_cloud",
             Box::new(|_settings, store_path| {
-                let backend = CommitCloudBackend::load(store_path).map_err(|e| BackendLoadError(e.into()))?;
+                let backend =
+                    CommitCloudBackend::load(store_path).map_err(|e| BackendLoadError(e.into()))?;
                 Ok(Box::new(backend) as Box<dyn Backend>)
             }),
         );

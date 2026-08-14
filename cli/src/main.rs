@@ -1,8 +1,8 @@
+use cc_lib::StoreFactoriesExt;
 use jj_cli::cli_util::{CliRunner, CommandHelper};
 use jj_cli::command_error::CommandError;
 use jj_lib::repo::StoreFactories;
 use std::process::ExitCode;
-use cc_lib::StoreFactoriesExt;
 
 mod commands;
 

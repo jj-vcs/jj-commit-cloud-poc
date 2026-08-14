@@ -8,7 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../server/Cargo.toml");
 
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    
+
     // OUT_DIR is target/<profile>/build/testutils-<hash>/out/
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR should be set");
     let out_path = Path::new(&out_dir);
@@ -37,16 +37,17 @@ fn main() {
     // Resolve the main target profile directory (e.g. target/debug/)
     // out_path is: target/<profile>/build/testutils-<hash>/out/
     let profile_dir = out_path
-        .parent().unwrap() // testutils-<hash>
-        .parent().unwrap() // build
-        .parent().unwrap(); // <profile> (e.g. debug or release)
+        .parent()
+        .unwrap() // testutils-<hash>
+        .parent()
+        .unwrap() // build
+        .parent()
+        .unwrap(); // <profile> (e.g. debug or release)
 
     let profile_name = profile_dir.file_name().unwrap().to_str().unwrap();
 
     // The binary is compiled under server_target_dir/<profile_name>/jj-cc-server
-    let compiled_binary_path = server_target_dir
-        .join(profile_name)
-        .join("jj-cc-server");
+    let compiled_binary_path = server_target_dir.join(profile_name).join("jj-cc-server");
 
     let dest_binary_path = profile_dir.join("jj-cc-server");
 

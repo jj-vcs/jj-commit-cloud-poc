@@ -1,8 +1,8 @@
 #![allow(elided_lifetimes_in_paths)]
 
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream};
 use futures::StreamExt as _;
+use futures::stream::{self, BoxStream};
 use jj_lib::backend::*;
 use jj_lib::index::Index;
 use jj_lib::object_id::ObjectId;
@@ -21,7 +21,9 @@ pub struct CommitCloudConfig {
 }
 
 impl CommitCloudConfig {
-    pub fn load_from_store(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_from_store(
+        store_path: &Path,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config_path = store_path.join("config.toml");
         let content = fs::read_to_string(&config_path)?;
         Ok(toml::from_str(&content)?)
@@ -39,11 +41,13 @@ pub struct CommitCloudBackend {
 
 // TODO: Replace run_async function with a persistent gRPC channel connection in the
 // CommitCloudBackend trait. Member functions should check if connection exists otherwise create
-// one. 
+// one.
 fn run_async<F, Fut, T>(f: F) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
 where
     F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
+        + Send
+        + 'static,
     T: Send + 'static,
 {
     std::thread::spawn(move || {
@@ -73,10 +77,18 @@ impl CommitCloudBackend {
         let server_url_cloned = server_url.to_string();
         let repo_id_cloned = repo_id.clone();
         run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
-            client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
-                repo_id: repo_id_cloned,
-            })).await?;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url_cloned,
+                )
+                .await?;
+            client
+                .register_repository(tonic::Request::new(
+                    cc_common::backend::RegisterRepositoryRequest {
+                        repo_id: repo_id_cloned,
+                    },
+                ))
+                .await?;
             Ok(())
         })?;
 
@@ -147,12 +159,24 @@ fn commit_to_proto(commit: &Commit) -> cc_common::backend::Commit {
     cc_common::backend::Commit {
         commit_id: vec![],
         change_id: commit.change_id.to_bytes().to_vec(),
-        parent_commit_ids: commit.parents.iter().map(|id| id.to_bytes().to_vec()).collect(),
-        root_tree_id: commit.root_tree.iter().map(|id| id.to_bytes().to_vec()).collect(),
+        parent_commit_ids: commit
+            .parents
+            .iter()
+            .map(|id| id.to_bytes().to_vec())
+            .collect(),
+        root_tree_id: commit
+            .root_tree
+            .iter()
+            .map(|id| id.to_bytes().to_vec())
+            .collect(),
         description: commit.description.clone(),
         author: Some(signature_to_proto(&commit.author)),
         committer: Some(signature_to_proto(&commit.committer)),
-        predecessors: commit.predecessors.iter().map(|id| id.to_bytes().to_vec()).collect(),
+        predecessors: commit
+            .predecessors
+            .iter()
+            .map(|id| id.to_bytes().to_vec())
+            .collect(),
         conflict_labels: commit.conflict_labels.as_slice().to_owned(),
         secure_sig: commit.secure_sig.as_ref().map(|s| s.sig.clone()),
     }
@@ -169,12 +193,21 @@ fn commit_from_proto(proto_commit: cc_common::backend::Commit) -> Commit {
         .collect();
 
     let root_tree = merge_builder.build();
-    let conflict_labels = jj_lib::conflict_labels::ConflictLabels::from_vec(proto_commit.conflict_labels).into_merge();
-
+    let conflict_labels =
+        jj_lib::conflict_labels::ConflictLabels::from_vec(proto_commit.conflict_labels)
+            .into_merge();
 
     Commit {
-        parents: proto_commit.parent_commit_ids.iter().map(|b| CommitId::from_bytes(b)).collect(),
-        predecessors: proto_commit.predecessors.iter().map(|b| CommitId::from_bytes(b)).collect(),
+        parents: proto_commit
+            .parent_commit_ids
+            .iter()
+            .map(|b| CommitId::from_bytes(b))
+            .collect(),
+        predecessors: proto_commit
+            .predecessors
+            .iter()
+            .map(|b| CommitId::from_bytes(b))
+            .collect(),
         root_tree,
         change_id: ChangeId::from_bytes(&proto_commit.change_id),
         description: proto_commit.description,
@@ -185,29 +218,37 @@ fn commit_from_proto(proto_commit: cc_common::backend::Commit) -> Commit {
     }
 }
 
-fn tree_entry_to_proto(entry: &jj_lib::backend::TreeEntry) -> BackendResult<cc_common::backend::TreeEntry> {
+fn tree_entry_to_proto(
+    entry: &jj_lib::backend::TreeEntry,
+) -> BackendResult<cc_common::backend::TreeEntry> {
     let value = match entry.value() {
-        TreeValue::File { id, executable, copy_id } => {
-            cc_common::backend::TreeValue {
-                value: Some(cc_common::backend::tree_value::Value::File(cc_common::backend::File {
+        TreeValue::File {
+            id,
+            executable,
+            copy_id,
+        } => cc_common::backend::TreeValue {
+            value: Some(cc_common::backend::tree_value::Value::File(
+                cc_common::backend::File {
                     id: id.to_bytes().to_vec(),
                     executable: *executable,
                     copy_id: copy_id.to_bytes().to_vec(),
-                })),
-            }
-        }
-        TreeValue::Symlink(id) => {
-            cc_common::backend::TreeValue {
-                value: Some(cc_common::backend::tree_value::Value::SymlinkId(id.to_bytes().to_vec())),
-            }
-        }
-        TreeValue::Tree(id) => {
-            cc_common::backend::TreeValue {
-                value: Some(cc_common::backend::tree_value::Value::TreeId(id.to_bytes().to_vec())),
-            }
-        }
+                },
+            )),
+        },
+        TreeValue::Symlink(id) => cc_common::backend::TreeValue {
+            value: Some(cc_common::backend::tree_value::Value::SymlinkId(
+                id.to_bytes().to_vec(),
+            )),
+        },
+        TreeValue::Tree(id) => cc_common::backend::TreeValue {
+            value: Some(cc_common::backend::tree_value::Value::TreeId(
+                id.to_bytes().to_vec(),
+            )),
+        },
         TreeValue::GitSubmodule(_id) => {
-            return Err(BackendError::Unsupported("Git submodules are not supported".into()));
+            return Err(BackendError::Unsupported(
+                "Git submodules are not supported".into(),
+            ));
         }
     };
 
@@ -217,17 +258,32 @@ fn tree_entry_to_proto(entry: &jj_lib::backend::TreeEntry) -> BackendResult<cc_c
     })
 }
 
-fn tree_entry_from_proto(proto_entry: cc_common::backend::TreeEntry) -> Result<(RepoPathComponentBuf, TreeValue), Box<dyn std::error::Error + Send + Sync>> {
+fn tree_entry_from_proto(
+    proto_entry: cc_common::backend::TreeEntry,
+) -> Result<(RepoPathComponentBuf, TreeValue), Box<dyn std::error::Error + Send + Sync>> {
     let component = RepoPathComponentBuf::new(proto_entry.name)?;
-    let proto_val = proto_entry.value.ok_or_else(|| "tree entry should have contained a TreeValue")?;
-    let val = match proto_val.value.ok_or_else(|| "TreeValue should have contained an inner value")? {
+    let proto_val = proto_entry
+        .value
+        .ok_or_else(|| "tree entry should have contained a TreeValue")?;
+    let val = match proto_val
+        .value
+        .ok_or_else(|| "TreeValue should have contained an inner value")?
+    {
         cc_common::backend::tree_value::Value::File(f) => TreeValue::File {
             id: FileId::from_bytes(&f.id),
             executable: f.executable,
-            copy_id: CopyId::from_bytes(if f.copy_id.len() == cc_common::COMMIT_ID_LENGTH { &f.copy_id } else { &cc_common::ROOT_COMMIT_ID_BYTES }),
+            copy_id: CopyId::from_bytes(if f.copy_id.len() == cc_common::COMMIT_ID_LENGTH {
+                &f.copy_id
+            } else {
+                &cc_common::ROOT_COMMIT_ID_BYTES
+            }),
         },
-        cc_common::backend::tree_value::Value::SymlinkId(id) => TreeValue::Symlink(SymlinkId::from_bytes(&id)),
-        cc_common::backend::tree_value::Value::TreeId(id) => TreeValue::Tree(TreeId::from_bytes(&id)),
+        cc_common::backend::tree_value::Value::SymlinkId(id) => {
+            TreeValue::Symlink(SymlinkId::from_bytes(&id))
+        }
+        cc_common::backend::tree_value::Value::TreeId(id) => {
+            TreeValue::Tree(TreeId::from_bytes(&id))
+        }
         cc_common::backend::tree_value::Value::ConflictId(_) => {
             return Err("tree entry should not have contained a ConflictId".into());
         }
@@ -237,7 +293,6 @@ fn tree_entry_from_proto(proto_entry: cc_common::backend::TreeEntry) -> Result<(
 
 #[async_trait]
 impl Backend for CommitCloudBackend {
-
     fn name(&self) -> &str {
         Self::name()
     }
@@ -277,11 +332,17 @@ impl Backend for CommitCloudBackend {
         let file_id_hex = id.hex();
 
         let content = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.read_file(tonic::Request::new(cc_common::backend::ReadFileRequest {
-                repo_id,
-                file_id: file_id_bytes,
-            })).await;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .read_file(tonic::Request::new(cc_common::backend::ReadFileRequest {
+                    repo_id,
+                    file_id: file_id_bytes,
+                }))
+                .await;
 
             let mut stream = match res {
                 Ok(r) => r.into_inner(),
@@ -290,9 +351,12 @@ impl Backend for CommitCloudBackend {
                         object_type: "file".into(),
                         hash: file_id_hex,
                         source: status.into(),
-                    }) as Box<dyn std::error::Error + Send + Sync>);
+                    })
+                        as Box<dyn std::error::Error + Send + Sync>);
                 }
-                Err(status) => return Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
+                Err(status) => {
+                    return Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>);
+                }
             };
 
             let mut content = Vec::new();
@@ -301,7 +365,8 @@ impl Backend for CommitCloudBackend {
                 content.extend_from_slice(&chunk.chunk);
             }
             Ok(content)
-        }).map_err(|e| match e.downcast::<BackendError>() {
+        })
+        .map_err(|e| match e.downcast::<BackendError>() {
             Ok(err) => *err,
             Err(e) => BackendError::Other(e),
         })?;
@@ -326,35 +391,52 @@ impl Backend for CommitCloudBackend {
         let repo_id = self.repo_id.clone();
 
         let file_id_bytes = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.write_file(tonic::Request::new(cc_common::backend::WriteFileRequest {
-                repo_id,
-                content: buffer,
-            })).await?;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .write_file(tonic::Request::new(cc_common::backend::WriteFileRequest {
+                    repo_id,
+                    content: buffer,
+                }))
+                .await?;
             Ok(res.into_inner().file_id)
-        }).map_err(|e| BackendError::Other(e.into()))?;
+        })
+        .map_err(|e| BackendError::Other(e.into()))?;
 
         Ok(FileId::from_bytes(&file_id_bytes))
     }
 
     async fn read_symlink(&self, _path: &RepoPath, _id: &SymlinkId) -> BackendResult<String> {
-        Err(BackendError::Unsupported("read_symlink not supported".to_string()))
+        Err(BackendError::Unsupported(
+            "read_symlink not supported".to_string(),
+        ))
     }
 
     async fn write_symlink(&self, _path: &RepoPath, _target: &str) -> BackendResult<SymlinkId> {
-        Err(BackendError::Unsupported("write_symlink not supported".to_string()))
+        Err(BackendError::Unsupported(
+            "write_symlink not supported".to_string(),
+        ))
     }
 
     async fn read_copy(&self, _id: &CopyId) -> BackendResult<CopyHistory> {
-        Err(BackendError::Unsupported("copies not supported".to_string()))
+        Err(BackendError::Unsupported(
+            "copies not supported".to_string(),
+        ))
     }
 
     async fn write_copy(&self, _contents: &CopyHistory) -> BackendResult<CopyId> {
-        Err(BackendError::Unsupported("copies not supported".to_string()))
+        Err(BackendError::Unsupported(
+            "copies not supported".to_string(),
+        ))
     }
 
     async fn get_related_copies(&self, _copy_id: &CopyId) -> BackendResult<Vec<RelatedCopy>> {
-        Err(BackendError::Unsupported("copies not supported".to_string()))
+        Err(BackendError::Unsupported(
+            "copies not supported".to_string(),
+        ))
     }
 
     async fn read_tree(&self, path: &RepoPath, id: &TreeId) -> BackendResult<Tree> {
@@ -369,12 +451,18 @@ impl Backend for CommitCloudBackend {
         let path_str = path.as_internal_file_string().to_string();
 
         let proto_entries = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.read_tree(tonic::Request::new(cc_common::backend::ReadTreeRequest {
-                repo_id,
-                tree_id: tree_id_bytes,
-                path: path_str,
-            })).await;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .read_tree(tonic::Request::new(cc_common::backend::ReadTreeRequest {
+                    repo_id,
+                    tree_id: tree_id_bytes,
+                    path: path_str,
+                }))
+                .await;
 
             match res {
                 Ok(r) => Ok(r.into_inner().entries),
@@ -383,19 +471,21 @@ impl Backend for CommitCloudBackend {
                         object_type: "tree".into(),
                         hash: tree_id_hex,
                         source: status.into(),
-                    }) as Box<dyn std::error::Error + Send + Sync>)
+                    })
+                        as Box<dyn std::error::Error + Send + Sync>)
                 }
                 Err(status) => Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
             }
-
-        }).map_err(|e| match e.downcast::<BackendError>() {
+        })
+        .map_err(|e| match e.downcast::<BackendError>() {
             Ok(err) => *err,
             Err(e) => BackendError::Other(e),
         })?;
 
         let mut jj_entries = Vec::new();
         for entry in proto_entries {
-            let (comp, val) = tree_entry_from_proto(entry).map_err(|e| BackendError::Other(e.into()))?;
+            let (comp, val) =
+                tree_entry_from_proto(entry).map_err(|e| BackendError::Other(e.into()))?;
             jj_entries.push((comp, val));
         }
 
@@ -407,7 +497,8 @@ impl Backend for CommitCloudBackend {
             return Ok(self.empty_tree_id.clone());
         }
 
-        let proto_entries: Result<Vec<_>, _> = tree.entries().map(|e| tree_entry_to_proto(&e)).collect();
+        let proto_entries: Result<Vec<_>, _> =
+            tree.entries().map(|e| tree_entry_to_proto(&e)).collect();
         let proto_entries = proto_entries?;
 
         let server_url = self.server_url.clone();
@@ -415,14 +506,21 @@ impl Backend for CommitCloudBackend {
         let path_str = path.as_internal_file_string().to_string();
 
         let tree_id_bytes = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.write_tree(tonic::Request::new(cc_common::backend::WriteTreeRequest {
-                repo_id,
-                path: path_str,
-                entries: proto_entries,
-            })).await?;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .write_tree(tonic::Request::new(cc_common::backend::WriteTreeRequest {
+                    repo_id,
+                    path: path_str,
+                    entries: proto_entries,
+                }))
+                .await?;
             Ok(res.into_inner().tree_id)
-        }).map_err(|e| BackendError::Other(e.into()))?;
+        })
+        .map_err(|e| BackendError::Other(e.into()))?;
 
         Ok(TreeId::from_bytes(&tree_id_bytes))
     }
@@ -441,27 +539,37 @@ impl Backend for CommitCloudBackend {
         let commit_id_hex = id.hex();
 
         let proto_commit = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.read_commit(tonic::Request::new(cc_common::backend::ReadCommitRequest {
-                repo_id,
-                commit_id: commit_id_bytes,
-            })).await;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .read_commit(tonic::Request::new(cc_common::backend::ReadCommitRequest {
+                    repo_id,
+                    commit_id: commit_id_bytes,
+                }))
+                .await;
 
             match res {
                 Ok(r) => r.into_inner().commit.ok_or_else(|| {
-                    Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "server response should have contained commit data"))
-                        as Box<dyn std::error::Error + Send + Sync>
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "server response should have contained commit data",
+                    )) as Box<dyn std::error::Error + Send + Sync>
                 }),
                 Err(status) if status.code() == tonic::Code::NotFound => {
                     Err(Box::new(BackendError::ObjectNotFound {
                         object_type: "commit".into(),
                         hash: commit_id_hex,
                         source: status.into(),
-                    }) as Box<dyn std::error::Error + Send + Sync>)
+                    })
+                        as Box<dyn std::error::Error + Send + Sync>)
                 }
                 Err(status) => Err(Box::new(status) as Box<dyn std::error::Error + Send + Sync>),
             }
-        }).map_err(|e| match e.downcast::<BackendError>() {
+        })
+        .map_err(|e| match e.downcast::<BackendError>() {
             Ok(err) => *err,
             Err(e) => BackendError::Other(e),
         })?;
@@ -479,13 +587,22 @@ impl Backend for CommitCloudBackend {
         let repo_id = self.repo_id.clone();
 
         let returned_id_bytes = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
-            let res = client.write_commit(tonic::Request::new(cc_common::backend::WriteCommitRequest {
-                repo_id,
-                commit: Some(proto_commit),
-            })).await?;
+            let mut client =
+                cc_common::backend::backend_service_client::BackendServiceClient::connect(
+                    server_url,
+                )
+                .await?;
+            let res = client
+                .write_commit(tonic::Request::new(
+                    cc_common::backend::WriteCommitRequest {
+                        repo_id,
+                        commit: Some(proto_commit),
+                    },
+                ))
+                .await?;
             Ok(res.into_inner().commit_id)
-        }).map_err(|e| BackendError::Other(e.into()))?;
+        })
+        .map_err(|e| BackendError::Other(e.into()))?;
 
         let returned_id = CommitId::from_bytes(&returned_id_bytes);
         Ok((returned_id, commit))

@@ -1,6 +1,6 @@
+use cc_common::backend::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use cc_common::backend::*;
 
 pub type RepoId = String;
 pub type CommitId = Vec<u8>;

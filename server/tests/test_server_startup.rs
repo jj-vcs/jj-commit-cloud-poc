@@ -1,5 +1,5 @@
-use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
+use tonic_health::pb::health_client::HealthClient;
 
 #[tokio::test]
 async fn test_server_startup_and_grpc_health_check() {
