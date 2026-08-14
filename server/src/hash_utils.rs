@@ -3,8 +3,16 @@ const EMPTY_STRING_PLACEHOLDER: &str = "JJ_EMPTY_STRING";
 fn signature_to_git(sig: Option<&cc_common::backend::Signature>) -> gix::actor::Signature {
     let (name, email) = match sig {
         Some(s) => (
-            if s.name.is_empty() { EMPTY_STRING_PLACEHOLDER } else { &s.name },
-            if s.email.is_empty() { EMPTY_STRING_PLACEHOLDER } else { &s.email },
+            if s.name.is_empty() {
+                EMPTY_STRING_PLACEHOLDER
+            } else {
+                &s.name
+            },
+            if s.email.is_empty() {
+                EMPTY_STRING_PLACEHOLDER
+            } else {
+                &s.email
+            },
         ),
         None => (EMPTY_STRING_PLACEHOLDER, EMPTY_STRING_PLACEHOLDER),
     };
@@ -59,7 +67,9 @@ pub fn compute_git_commit_hash(commit: &cc_common::backend::Commit) -> Vec<u8> {
     };
 
     let mut buf = Vec::new();
-    gix_commit.write_to(&mut buf).expect("gix commit should have serialized successfully");
+    gix_commit
+        .write_to(&mut buf)
+        .expect("gix commit should have serialized successfully");
     let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Commit, &buf);
     hash.as_bytes().to_vec()
 }
@@ -78,12 +88,23 @@ pub fn compute_git_tree_hash(entries: &[cc_common::backend::TreeEntry]) -> Vec<u
     for entry in entries {
         let (kind, id_bytes) = match entry.value.as_ref().and_then(|v| v.value.as_ref()) {
             Some(cc_common::backend::tree_value::Value::File(f)) => {
-                let k = if f.executable { gix::objs::tree::EntryKind::BlobExecutable } else { gix::objs::tree::EntryKind::Blob };
+                let k = if f.executable {
+                    gix::objs::tree::EntryKind::BlobExecutable
+                } else {
+                    gix::objs::tree::EntryKind::Blob
+                };
                 (k, &f.id[..])
             }
-            Some(cc_common::backend::tree_value::Value::TreeId(id)) => (gix::objs::tree::EntryKind::Tree, &id[..]),
-            Some(cc_common::backend::tree_value::Value::SymlinkId(id)) => (gix::objs::tree::EntryKind::Link, &id[..]),
-            _ => (gix::objs::tree::EntryKind::Blob, &cc_common::ROOT_COMMIT_ID_BYTES[..]),
+            Some(cc_common::backend::tree_value::Value::TreeId(id)) => {
+                (gix::objs::tree::EntryKind::Tree, &id[..])
+            }
+            Some(cc_common::backend::tree_value::Value::SymlinkId(id)) => {
+                (gix::objs::tree::EntryKind::Link, &id[..])
+            }
+            _ => (
+                gix::objs::tree::EntryKind::Blob,
+                &cc_common::ROOT_COMMIT_ID_BYTES[..],
+            ),
         };
         if let Ok(oid) = gix::hash::ObjectId::try_from(id_bytes) {
             gix_entries.push(gix::objs::tree::Entry {
@@ -97,9 +118,13 @@ pub fn compute_git_tree_hash(entries: &[cc_common::backend::TreeEntry]) -> Vec<u
     // Sort entries according to Git canonical tree entry ordering rules (gix::objs::tree::Entry implements Ord for Git tree sorting).
     gix_entries.sort_unstable();
 
-    let gix_tree = gix::objs::Tree { entries: gix_entries };
+    let gix_tree = gix::objs::Tree {
+        entries: gix_entries,
+    };
     let mut buf = Vec::new();
-    gix_tree.write_to(&mut buf).expect("gix tree should have serialized successfully");
+    gix_tree
+        .write_to(&mut buf)
+        .expect("gix tree should have serialized successfully");
 
     let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Tree, &buf);
     hash.as_bytes().to_vec()

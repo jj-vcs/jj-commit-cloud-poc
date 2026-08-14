@@ -17,7 +17,11 @@ impl CommitCloudBackendService {
         Self { store }
     }
 
-    fn ensure_repo_registered_error(&self, repo_id: &str, action: &str) -> Result<(), tonic::Status> {
+    fn ensure_repo_registered_error(
+        &self,
+        repo_id: &str,
+        action: &str,
+    ) -> Result<(), tonic::Status> {
         if !self.store.repos.lock().unwrap().contains(repo_id) {
             return Err(tonic::Status::not_found(format!(
                 "repository should have been registered before {action}"
@@ -60,7 +64,9 @@ impl BackendService for CommitCloudBackendService {
                 }));
             }
         }
-        Err(tonic::Status::not_found("commit should have been present in cloud database"))
+        Err(tonic::Status::not_found(
+            "commit should have been present in cloud database",
+        ))
     }
 
     async fn write_commit(
@@ -72,7 +78,9 @@ impl BackendService for CommitCloudBackendService {
 
         self.ensure_repo_registered_error(&repo_id, "requesting commits")?;
 
-        let mut commit = req.commit.ok_or_else(|| tonic::Status::invalid_argument("request should have contained commit data"))?;
+        let mut commit = req.commit.ok_or_else(|| {
+            tonic::Status::invalid_argument("request should have contained commit data")
+        })?;
         let commit_id = if commit.commit_id.is_empty() {
             compute_git_commit_hash(&commit)
         } else {
@@ -114,7 +122,9 @@ impl BackendService for CommitCloudBackendService {
                 }));
             }
         }
-        Err(tonic::Status::not_found("tree should have been present in cloud database"))
+        Err(tonic::Status::not_found(
+            "tree should have been present in cloud database",
+        ))
     }
 
     async fn write_tree(
@@ -135,7 +145,8 @@ impl BackendService for CommitCloudBackendService {
         Ok(tonic::Response::new(WriteTreeResponse { tree_id }))
     }
 
-    type ReadFileStream = tokio_stream::wrappers::ReceiverStream<Result<ReadFileResponse, tonic::Status>>;
+    type ReadFileStream =
+        tokio_stream::wrappers::ReceiverStream<Result<ReadFileResponse, tonic::Status>>;
 
     async fn read_file(
         &self,
@@ -152,14 +163,18 @@ impl BackendService for CommitCloudBackendService {
             .get(&repo_id)
             .and_then(|repo_files| repo_files.get(&file_id))
             .cloned()
-            .ok_or_else(|| tonic::Status::not_found("file should have been present in cloud database"))?;
+            .ok_or_else(|| {
+                tonic::Status::not_found("file should have been present in cloud database")
+            })?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         tokio::spawn(async move {
             let _ = tx.send(Ok(ReadFileResponse { chunk: content })).await;
         });
 
-        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        ))
     }
 
     // TODO: Upgrade write_file RPC handler to consume tonic::Streaming<WriteFileRequest>
