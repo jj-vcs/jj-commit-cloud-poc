@@ -1,7 +1,7 @@
 use std::fs;
 
 #[tokio::test]
-async fn test_cloud_init_integration() {
+async fn test_cc_init_creates_local_workspace() {
     let workspace = testutils::TestWorkspace::init().await;
     let repo_path = workspace.repo_path();
 
@@ -37,7 +37,7 @@ async fn test_cloud_init_integration() {
 }
 
 #[tokio::test]
-async fn test_cloud_init_repo_registered() {
+async fn test_cc_init_registers_repository() {
     let workspace = testutils::TestWorkspace::init().await;
     let repo_path = workspace.repo_path();
 
@@ -69,7 +69,7 @@ async fn test_cloud_init_repo_registered() {
 }
 
 #[tokio::test]
-async fn test_cloud_init_failure_integration() {
+async fn test_cc_init_fails_on_invalid_server_addr() {
     let mut cmd = assert_cmd::Command::cargo_bin("jj")
         .expect("The jj CLI binary should have compiled");
 

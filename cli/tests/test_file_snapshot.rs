@@ -1,7 +1,7 @@
 use std::fs;
 
 #[tokio::test]
-async fn test_file_snapshot_integration() {
+async fn test_log_snapshots_working_copy() {
     let workspace = testutils::TestWorkspace::init().await;
     let repo_path = workspace.repo_path();
 
