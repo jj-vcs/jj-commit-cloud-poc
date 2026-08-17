@@ -2,7 +2,7 @@ use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
 
 #[tokio::test]
-async fn test_server_startup_and_grpc_health_check() {
+async fn test_server_startup_succeeds() {
     // Spawn jj-cc-server using the shared dynamic port test harness
     let server = testutils::spawn_server().await;
 

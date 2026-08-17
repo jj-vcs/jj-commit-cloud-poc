@@ -1,5 +1,5 @@
 #[tokio::test]
-async fn test_log_command_integration() {
+async fn test_log_root_commit_exists() {
     let workspace = testutils::TestWorkspace::init().await;
 
     // Special character is needed to assert accurate log output. see cli/tests/test_log_command.rs upstream
