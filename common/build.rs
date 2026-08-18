@@ -3,6 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(
             &[
                 "proto/backend.proto",
+                "proto/op_store.proto",
             ],
             &["proto"],
         )?;
