@@ -3343,6 +3343,7 @@ name = "jj-commit-cloud-server"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "async-trait",
  "cc-common",
  "clap",
  "gix 0.68.0",
