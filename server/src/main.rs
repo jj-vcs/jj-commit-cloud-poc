@@ -6,12 +6,15 @@ use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cc_common::backend::backend_service_server::BackendServiceServer;
+use cc_common::op_store::op_store_service_server::OpStoreServiceServer;
 
 mod backend;
 mod hash_utils;
+mod op_store;
 pub mod store;
 
 use backend::CommitCloudBackendService;
+use op_store::CommitCloudOpStoreService;
 use store::{MemoryStore, Store};
 
 #[derive(Parser, Debug)]
@@ -55,6 +58,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health_reporter
         .set_service_status("", tonic_health::ServingStatus::Serving)
         .await;
+    health_reporter
+        .set_serving::<OpStoreServiceServer<CommitCloudOpStoreService>>()
+        .await;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local_addr = listener.local_addr()?;
@@ -63,10 +69,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
     let server_impl = CommitCloudServerImpl::default();
     let backend_service = CommitCloudBackendService::new(server_impl.store.clone());
+    let op_store_service = CommitCloudOpStoreService::new(server_impl.store.clone());
 
     Server::builder()
         .add_service(health_service)
         .add_service(BackendServiceServer::new(backend_service))
+        .add_service(OpStoreServiceServer::new(op_store_service))
         .serve_with_incoming_shutdown(incoming, async {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
