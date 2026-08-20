@@ -3347,6 +3347,7 @@ dependencies = [
  "cc-common",
  "clap",
  "gix 0.68.0",
+ "hex",
  "predicates",
  "testutils",
  "tokio",

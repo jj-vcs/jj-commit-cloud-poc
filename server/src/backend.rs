@@ -5,6 +5,7 @@ use tracing::info;
 use cc_common::backend::backend_service_server::BackendService;
 use cc_common::backend::*;
 
+use crate::error_util::ensure_repo_registered_error;
 use crate::hash_utils::{compute_git_blob_hash, compute_git_commit_hash, compute_git_tree_hash};
 use crate::store::Store;
 
@@ -16,19 +17,6 @@ pub struct CommitCloudBackendService {
 impl CommitCloudBackendService {
     pub fn new(store: Arc<dyn Store>) -> Self {
         Self { store }
-    }
-
-    async fn ensure_repo_registered_error(
-        &self,
-        repo_id: &str,
-        action: &str,
-    ) -> Result<(), tonic::Status> {
-        if !self.store.is_repo_registered(repo_id).await {
-            return Err(tonic::Status::not_found(format!(
-                "repository should have been registered before {action}"
-            )));
-        }
-        Ok(())
     }
 }
 
@@ -54,7 +42,7 @@ impl BackendService for CommitCloudBackendService {
         let repo_id = req.repo_id;
         let commit_id = req.commit_id;
 
-        self.ensure_repo_registered_error(&repo_id, "requesting commits").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "requesting commits").await?;
 
         if let Some(commit) = self.store.get_commit(&repo_id, &commit_id).await {
             return Ok(tonic::Response::new(ReadCommitResponse {
@@ -73,7 +61,7 @@ impl BackendService for CommitCloudBackendService {
         let req = request.into_inner();
         let repo_id = req.repo_id;
 
-        self.ensure_repo_registered_error(&repo_id, "requesting commits").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "requesting commits").await?;
 
         let mut commit = req.commit.ok_or_else(|| {
             tonic::Status::invalid_argument("request should have contained commit data")
@@ -99,7 +87,7 @@ impl BackendService for CommitCloudBackendService {
         let repo_id = req.repo_id;
         let tree_id = req.tree_id;
 
-        self.ensure_repo_registered_error(&repo_id, "requesting trees").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "requesting trees").await?;
 
         if tree_id == cc_common::EMPTY_TREE_ID_BYTES {
             return Ok(tonic::Response::new(ReadTreeResponse {
@@ -126,7 +114,7 @@ impl BackendService for CommitCloudBackendService {
         let req = request.into_inner();
         let repo_id = req.repo_id;
 
-        self.ensure_repo_registered_error(&repo_id, "writing trees").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "writing trees").await?;
 
         let tree_id = compute_git_tree_hash(&req.entries);
 
@@ -146,7 +134,7 @@ impl BackendService for CommitCloudBackendService {
         let repo_id = req.repo_id;
         let file_id = req.file_id;
 
-        self.ensure_repo_registered_error(&repo_id, "reading files").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "reading files").await?;
 
         let content = self.store.get_file(&repo_id, &file_id).await.ok_or_else(|| {
             tonic::Status::not_found("file should have been present in cloud database")
@@ -171,7 +159,7 @@ impl BackendService for CommitCloudBackendService {
         let req = request.into_inner();
         let repo_id = req.repo_id;
 
-        self.ensure_repo_registered_error(&repo_id, "writing files").await?;
+        ensure_repo_registered_error(self.store.as_ref(), &repo_id, "writing files").await?;
 
         let file_id = compute_git_blob_hash(&req.content);
 
