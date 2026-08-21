@@ -12,7 +12,7 @@ mod hash_utils;
 pub mod store;
 
 use backend::CommitCloudBackendService;
-use store::MemoryStore;
+use store::{MemoryStore, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "jj-cc-server", about = "Jujutsu Commit Cloud Server")]
@@ -27,7 +27,7 @@ struct Args {
 }
 
 pub struct CommitCloudServerImpl {
-    pub store: Arc<MemoryStore>,
+    pub store: Arc<dyn Store>,
 }
 
 impl Default for CommitCloudServerImpl {
