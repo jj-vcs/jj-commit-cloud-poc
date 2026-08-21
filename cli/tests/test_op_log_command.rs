@@ -17,7 +17,6 @@ async fn test_cc_init_op_store_type_returns_commit_cloud() {
 
 // Run jj operation, modify file, and verify that the commit cloud operation log returns the accurate result
 #[tokio::test]
-#[should_panic]
 async fn test_op_log_succeeds_on_snapshot() {
     let workspace = testutils::TestWorkspace::init().await;
     let repo_path = workspace.repo_path();
