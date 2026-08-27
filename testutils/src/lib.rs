@@ -33,6 +33,10 @@ fn extract_listening_address(line: &str) -> Option<String> {
 }
 
 pub async fn spawn_server() -> ServerGuard {
+    spawn_server_with_args(&[]).await
+}
+
+pub async fn spawn_server_with_args(extra_args: &[&str]) -> ServerGuard {
     // Start the server with --port=0. Setting the port to 0 in tonic tells the OS 
     // to dynamically allocate any available ephemeral port, preventing port collisions.
     let current_exe = std::env::current_exe().expect("The current test executable path should be retrievable");
@@ -41,8 +45,13 @@ pub async fn spawn_server() -> ServerGuard {
         .parent().expect("The target profile directory should exist")
         .join("jj-cc-server");
 
-    let mut child = Command::new(server_binary_path)
-        .arg("--port=0")
+    let mut cmd = Command::new(server_binary_path);
+    cmd.arg("--port=0");
+    for arg in extra_args {
+        cmd.arg(arg);
+    }
+
+    let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -82,6 +91,11 @@ pub async fn spawn_server() -> ServerGuard {
     ServerGuard { child, url }
 }
 
+pub async fn spawn_sqlite_server(db_path: &std::path::Path) -> ServerGuard {
+    let sqlite_arg = format!("--sqlite-path={}", db_path.display());
+    spawn_server_with_args(&["--store-type=sqlite", &sqlite_arg]).await
+}
+
 /// Struct to hold the jj-cc-server instance and the temporary test directory where changes are made to the working directory for cli integration tests
 pub struct TestWorkspace {
     server: ServerGuard,
@@ -93,6 +107,30 @@ impl TestWorkspace {
     /// Commit Cloud repository workspace using `jj cc init`.
     pub async fn init() -> Self {
         let server = spawn_server().await;
+        let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
+        let repo_path = temp_dir.path();
+
+        let mut init_cmd = assert_cmd::Command::cargo_bin("jj")
+            .expect("The jj CLI binary should have compiled");
+
+        init_cmd
+            .current_dir(repo_path)
+            .args([
+                "cc",
+                "init",
+                "--server",
+                server.url(),
+                "--create",
+                ".",
+            ]);
+
+        init_cmd.assert().success();
+
+        TestWorkspace { server, temp_dir }
+    }
+
+    pub async fn init_sqlite(db_path: &std::path::Path) -> Self {
+        let server = spawn_sqlite_server(db_path).await;
         let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
         let repo_path = temp_dir.path();
 
