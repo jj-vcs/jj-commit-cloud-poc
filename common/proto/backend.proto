@@ -29,7 +29,7 @@ service BackendService {
 // Repository registration messages for initializing a remote repo
 // Used when running `jj cc init` to register a new local repository with the backend server
 message RegisterRepositoryRequest {
-  string repo_id = 1;
+  optional string name = 1;
 }
 
 message RegisterRepositoryResponse {
