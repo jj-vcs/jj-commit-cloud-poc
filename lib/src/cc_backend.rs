@@ -12,7 +12,6 @@ use std::fs;
 use std::path::Path;
 use std::pin::Pin;
 use std::time::SystemTime;
-use uuid::Uuid;
 
 use crate::util::{run_async, CommitCloudConfig};
 
@@ -29,24 +28,24 @@ impl CommitCloudBackend {
     pub fn name() -> &'static str {
         "commit_cloud"
     }
-
+    
+    // TODO: Add logic to pass the optional repository 'name' field during initialization.
+    // The field exists in the RPC and can be stored by the server for repository display and aliasing. 
     pub fn init(
         store_path: &Path,
         server_url: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let repo_id = Uuid::new_v4().to_string();
         let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
         let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
 
         let server_url_cloned = server_url.to_string();
-        let repo_id_cloned = repo_id.clone();
-        run_async(move || async move {
+        let repo_id = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
-            client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
-                repo_id: repo_id_cloned,
-            })).await?;
-            Ok(())
+            let register_repo_response = client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
+                name: None,
+            })).await?.into_inner();
+            Ok(register_repo_response.repo_id)
         })?;
 
         // Write local config toml
