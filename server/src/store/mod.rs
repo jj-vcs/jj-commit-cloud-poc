@@ -3,8 +3,10 @@ use cc_common::backend::*;
 use cc_common::op_store::*;
 
 pub mod memorystore;
+pub mod sql_dialect;
 
 pub use memorystore::{CommitId, FileId, MemoryStore, OpId, RepoId, TreeId, ViewId};
+pub use sql_dialect::SqlDialect;
 
 // Use async fn for storage functions to not block server threads for read/write operations as current and future storage backends are implemented
 #[async_trait]
