@@ -28,6 +28,14 @@ struct Args {
     /// Port to listen on (use 0 for ephemeral port assignment)
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+
+    /// Storage backend type: "memory" or "sqlite"
+    #[arg(long, default_value = "memory")]
+    store_type: String,
+
+    /// Path to SQLite database file (required if store-type is "sqlite")
+    #[arg(long)]
+    sqlite_path: Option<std::path::PathBuf>,
 }
 
 pub struct CommitCloudServerImpl {
@@ -53,6 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
+    if args.store_type == "sqlite" {
+        eprintln!("SQLite storage backend is not yet implemented");
+        std::process::exit(1);
+    }
+
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
