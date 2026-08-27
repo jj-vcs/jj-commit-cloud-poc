@@ -61,10 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
-    if args.store_type == "sqlite" {
-        eprintln!("SQLite storage backend is not yet implemented");
-        std::process::exit(1);
-    }
+    let store: Arc<dyn Store> = match args.store_type.as_str() {
+        "memory" => Arc::new(MemoryStore::default()),
+        "sqlite" => {
+            let path = args
+                .sqlite_path
+                .expect("--sqlite-path is required when --store-type=sqlite");
+            Arc::new(store::SqliteStore::open(path)?)
+        }
+        _ => return Err(format!("Unknown store type: {}", args.store_type).into()),
+    };
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
 
@@ -81,9 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("jj-cc-server listening on {}", local_addr);
 
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-    let server_impl = CommitCloudServerImpl::default();
-    let backend_service = CommitCloudBackendService::new(server_impl.store.clone());
-    let op_store_service = CommitCloudOpStoreService::new(server_impl.store.clone());
+    let backend_service = CommitCloudBackendService::new(store.clone());
+    let op_store_service = CommitCloudOpStoreService::new(store.clone());
 
     Server::builder()
         .add_service(health_service)

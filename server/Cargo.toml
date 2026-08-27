@@ -20,6 +20,8 @@ async-trait = "0.1"
 gix = "0.68.0"
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
+prost = "0.13"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
