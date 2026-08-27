@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tonic::transport::Server;
@@ -18,6 +18,13 @@ use backend::CommitCloudBackendService;
 use op_store::CommitCloudOpStoreService;
 use store::{MemoryStore, Store};
 
+// Storage backend to run the server against.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum StoreType {
+    Memory,
+    Sqlite,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "jj-cc-server", about = "Jujutsu Commit Cloud Server")]
 struct Args {
@@ -28,6 +35,14 @@ struct Args {
     /// Port to listen on (use 0 for ephemeral port assignment)
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+
+    /// Storage backend type
+    #[arg(long, value_enum, default_value_t = StoreType::Memory)]
+    store_type: StoreType,
+
+    /// Path to SQLite database file (defaults to ~/.jj-cc-server/commit_cloud.db)
+    #[arg(long)]
+    sqlite_path: Option<std::path::PathBuf>,
 }
 
 pub struct CommitCloudServerImpl {
@@ -53,6 +68,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
+    match args.store_type {
+        StoreType::Memory => {}
+        StoreType::Sqlite => {
+            eprintln!("SQLite storage backend is not yet implemented");
+            std::process::exit(1);
+        }
+    }
+
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
