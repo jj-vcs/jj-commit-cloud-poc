@@ -65,11 +65,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
-    if args.store_type == "spanner" {
-        eprintln!("Spanner storage backend is not yet implemented");
-        std::process::exit(1);
-    }
-
     let store: Arc<dyn Store> = match args.store_type.as_str() {
         "memory" => Arc::new(MemoryStore::default()),
         "sqlite" => {
@@ -77,6 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .sqlite_path
                 .expect("--sqlite-path is required when --store-type=sqlite");
             Arc::new(store::SqliteStore::open(path)?)
+        }
+        "spanner" => {
+            let db_name = args
+                .spanner_database
+                .as_deref()
+                .unwrap_or("projects/test/instances/test/databases/test");
+            Arc::new(store::SpannerStore::open_spanner(db_name)?)
         }
         _ => return Err(format!("Unknown store type: {}", args.store_type).into()),
     };

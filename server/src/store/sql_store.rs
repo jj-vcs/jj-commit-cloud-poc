@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::{SqlDialect, SqliteDialect, Store};
+use super::{SpannerDialect, SqlDialect, SqliteDialect, Store};
 
 #[derive(Clone)]
 pub struct SqlStore<D: SqlDialect> {
@@ -15,6 +15,7 @@ pub struct SqlStore<D: SqlDialect> {
 }
 
 pub type SqliteStore = SqlStore<SqliteDialect>;
+pub type SpannerStore = SqlStore<SpannerDialect>;
 
 impl SqlStore<SqliteDialect> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
@@ -42,6 +43,19 @@ impl SqlStore<SqliteDialect> {
         let schema = include_str!("../../db/schema_sqlite.sql");
         conn.execute_batch(schema)?;
         Ok(())
+    }
+}
+
+impl SqlStore<SpannerDialect> {
+    pub fn open_spanner(_db_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let conn = Connection::open_in_memory()?;
+        let store = Self {
+            conn: Arc::new(Mutex::new(conn)),
+            dialect: SpannerDialect,
+        };
+        let schema = include_str!("../../db/schema_sqlite.sql");
+        store.conn.lock().unwrap().execute_batch(schema)?;
+        Ok(store)
     }
 }
 

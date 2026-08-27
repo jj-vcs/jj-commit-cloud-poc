@@ -7,8 +7,8 @@ pub mod sql_dialect;
 pub mod sql_store;
 
 pub use memorystore::{CommitId, FileId, MemoryStore, OpId, RepoId, TreeId, ViewId};
-pub use sql_dialect::{SqlDialect, SqliteDialect};
-pub use sql_store::{SqlStore, SqliteStore};
+pub use sql_dialect::{SpannerDialect, SqlDialect, SqliteDialect};
+pub use sql_store::{SpannerStore, SqlStore, SqliteStore};
 
 // Use async fn for storage functions to not block server threads for read/write operations as current and future storage backends are implemented
 #[async_trait]
