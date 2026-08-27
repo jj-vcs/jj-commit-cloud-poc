@@ -19,6 +19,7 @@ cc-common = { path = "../common" }
 async-trait = "0.1"
 gix = "0.68.0"
 hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
