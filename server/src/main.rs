@@ -29,13 +29,17 @@ struct Args {
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
 
-    /// Storage backend type: "memory" or "sqlite"
+    /// Storage backend type: "memory", "sqlite", or "spanner"
     #[arg(long, default_value = "memory")]
     store_type: String,
 
     /// Path to SQLite database file (required if store-type is "sqlite")
     #[arg(long)]
     sqlite_path: Option<std::path::PathBuf>,
+
+    /// Google Cloud Spanner database resource name (required if store-type is "spanner")
+    #[arg(long)]
+    spanner_database: Option<String>,
 }
 
 pub struct CommitCloudServerImpl {
@@ -61,6 +65,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
+    if args.store_type == "spanner" {
+        eprintln!("Spanner storage backend is not yet implemented");
+        std::process::exit(1);
+    }
+
     let store: Arc<dyn Store> = match args.store_type.as_str() {
         "memory" => Arc::new(MemoryStore::default()),
         "sqlite" => {

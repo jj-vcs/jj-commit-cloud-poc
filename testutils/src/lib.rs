@@ -96,6 +96,11 @@ pub async fn spawn_sqlite_server(db_path: &std::path::Path) -> ServerGuard {
     spawn_server_with_args(&["--store-type=sqlite", &sqlite_arg]).await
 }
 
+pub async fn spawn_spanner_server(db_name: &str) -> ServerGuard {
+    let spanner_arg = format!("--spanner-database={}", db_name);
+    spawn_server_with_args(&["--store-type=spanner", &spanner_arg]).await
+}
+
 /// Struct to hold the jj-cc-server instance and the temporary test directory where changes are made to the working directory for cli integration tests
 pub struct TestWorkspace {
     server: ServerGuard,
@@ -131,6 +136,30 @@ impl TestWorkspace {
 
     pub async fn init_sqlite(db_path: &std::path::Path) -> Self {
         let server = spawn_sqlite_server(db_path).await;
+        let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
+        let repo_path = temp_dir.path();
+
+        let mut init_cmd = assert_cmd::Command::cargo_bin("jj")
+            .expect("The jj CLI binary should have compiled");
+
+        init_cmd
+            .current_dir(repo_path)
+            .args([
+                "cc",
+                "init",
+                "--server",
+                server.url(),
+                "--create",
+                ".",
+            ]);
+
+        init_cmd.assert().success();
+
+        TestWorkspace { server, temp_dir }
+    }
+
+    pub async fn init_spanner(db_name: &str) -> Self {
+        let server = spawn_spanner_server(db_name).await;
         let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
         let repo_path = temp_dir.path();
 
