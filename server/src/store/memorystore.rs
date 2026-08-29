@@ -36,7 +36,7 @@ impl Store for MemoryStore {
         self.repos.lock().unwrap().contains(repo_id)
     }
 
-    async fn register_repo(&self, repo_id: String) {
+    async fn register_repo(&self, repo_id: String, _name: Option<String>) {
         self.repos.lock().unwrap().insert(repo_id);
     }
 

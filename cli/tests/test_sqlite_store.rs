@@ -1,7 +1,6 @@
 use std::fs;
 
 #[tokio::test]
-#[should_panic]
 async fn test_sqlite_store_init_and_snapshot_succeeds() {
     let db_dir = tempfile::tempdir().expect("Failed to create temp dir for sqlite db");
     let db_path = db_dir.path().join("test_store.db");

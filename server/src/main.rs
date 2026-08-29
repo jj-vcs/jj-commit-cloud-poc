@@ -57,6 +57,16 @@ impl Default for CommitCloudServerImpl {
     }
 }
 
+fn get_default_sqlite_path() -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        let dir = std::path::PathBuf::from(home).join(".jj-cc-server");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("commit_cloud.db")
+    } else {
+        std::path::PathBuf::from("commit_cloud.db")
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
@@ -68,13 +78,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
-    match args.store_type {
-        StoreType::Memory => {}
+    let store: Arc<dyn Store> = match args.store_type {
+        StoreType::Memory => Arc::new(MemoryStore::default()),
         StoreType::Sqlite => {
-            eprintln!("SQLite storage backend is not yet implemented");
-            std::process::exit(1);
+            let path = args.sqlite_path.unwrap_or_else(get_default_sqlite_path);
+            info!("Opening SQLite Database Store at '{}'", path.display());
+            Arc::new(store::SqliteStore::open(path)?)
         }
-    }
+    };
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
 
@@ -91,9 +102,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("jj-cc-server listening on {}", local_addr);
 
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-    let server_impl = CommitCloudServerImpl::default();
-    let backend_service = CommitCloudBackendService::new(server_impl.store.clone());
-    let op_store_service = CommitCloudOpStoreService::new(server_impl.store.clone());
+    let backend_service = CommitCloudBackendService::new(store.clone());
+    let op_store_service = CommitCloudOpStoreService::new(store.clone());
 
     Server::builder()
         .add_service(health_service)
@@ -115,4 +125,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_sqlite_path() {
+        let path = get_default_sqlite_path();
+        assert!(path.ends_with("commit_cloud.db"));
+    }
 }
