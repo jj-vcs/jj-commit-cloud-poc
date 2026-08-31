@@ -36,14 +36,45 @@ pub async fn spawn_server() -> ServerGuard {
     spawn_server_with_args(&[]).await
 }
 
-pub async fn spawn_server_with_args(extra_args: &[&str]) -> ServerGuard {
-    // Start the server with --port=0. Setting the port to 0 in tonic tells the OS 
-    // to dynamically allocate any available ephemeral port, preventing port collisions.
+fn find_server_bin() -> std::path::PathBuf {
     let current_exe = std::env::current_exe().expect("The current test executable path should be retrievable");
-    let server_binary_path = current_exe
+    let target_dir = current_exe
         .parent().expect("The deps directory should exist")
-        .parent().expect("The target profile directory should exist")
-        .join("jj-cc-server");
+        .parent().expect("The target profile directory should exist");
+    let direct = target_dir.join("jj-cc-server");
+    if direct.exists() {
+        return direct;
+    }
+    let poc_server = target_dir.parent().unwrap().join("jj-commit-cloud-poc/target/debug/jj-cc-server");
+    if poc_server.exists() {
+        return poc_server;
+    }
+    direct
+}
+
+fn find_jj_cmd() -> assert_cmd::Command {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_jj") {
+        return assert_cmd::Command::new(path);
+    }
+    let current_exe = std::env::current_exe().unwrap();
+    let target_dir = current_exe.parent().unwrap().parent().unwrap();
+    let direct = target_dir.join("jj");
+    if direct.exists() {
+        return assert_cmd::Command::new(direct);
+    }
+    let poc_jj = target_dir.parent().unwrap().join("jj-commit-cloud-poc/target/debug/jj");
+    if poc_jj.exists() {
+        return assert_cmd::Command::new(poc_jj);
+    }
+    let fallback = std::path::PathBuf::from("/usr/local/google/home/srachaba/Projects/jj-commit-cloud-poc/target/debug/jj");
+    if fallback.exists() {
+        return assert_cmd::Command::new(fallback);
+    }
+    assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled")
+}
+
+pub async fn spawn_server_with_args(extra_args: &[&str]) -> ServerGuard {
+    let server_binary_path = find_server_bin();
 
     let mut cmd = Command::new(server_binary_path);
     cmd.arg("--port=0");
@@ -110,11 +141,12 @@ impl TestWorkspace {
         let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
         let repo_path = temp_dir.path();
 
-        let mut init_cmd = assert_cmd::Command::cargo_bin("jj")
-            .expect("The jj CLI binary should have compiled");
+        let mut init_cmd = find_jj_cmd();
 
         init_cmd
             .current_dir(repo_path)
+            .env("JJ_USER", "Test User")
+            .env("JJ_EMAIL", "test.user@example.com")
             .args([
                 "cc",
                 "init",
@@ -134,11 +166,12 @@ impl TestWorkspace {
         let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
         let repo_path = temp_dir.path();
 
-        let mut init_cmd = assert_cmd::Command::cargo_bin("jj")
-            .expect("The jj CLI binary should have compiled");
+        let mut init_cmd = find_jj_cmd();
 
         init_cmd
             .current_dir(repo_path)
+            .env("JJ_USER", "Test User")
+            .env("JJ_EMAIL", "test.user@example.com")
             .args([
                 "cc",
                 "init",
@@ -162,9 +195,88 @@ impl TestWorkspace {
     }
 
     pub fn jj_cmd(&self) -> assert_cmd::Command {
-        let mut cmd = assert_cmd::Command::cargo_bin("jj")
-            .expect("The jj CLI binary should have compiled");
+        let mut cmd = find_jj_cmd();
         cmd.current_dir(self.repo_path());
+        cmd.env("JJ_USER", "Test User");
+        cmd.env("JJ_EMAIL", "test.user@example.com");
         cmd
+    }
+
+    pub async fn mount_vfs(&self) -> VfsMountGuard {
+        spawn_vfs_mount(self.repo_path()).await
+    }
+}
+
+pub struct VfsMountGuard {
+    child: Option<tokio::process::Child>,
+    mount_dir: tempfile::TempDir,
+}
+
+impl VfsMountGuard {
+    pub fn mountpoint(&self) -> &std::path::Path {
+        self.mount_dir.path()
+    }
+}
+
+impl Drop for VfsMountGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("fusermount")
+                .arg("-u")
+                .arg(self.mount_dir.path())
+                .status();
+        }
+    }
+}
+
+fn find_jjfsd_bin() -> std::path::PathBuf {
+    let current_exe = std::env::current_exe().unwrap_or_default();
+    let target_dir = current_exe
+        .parent()
+        .unwrap_or(std::path::Path::new(""))
+        .parent()
+        .unwrap_or(std::path::Path::new(""));
+    let direct = target_dir.join("jjfsd");
+    if direct.exists() {
+        return direct;
+    }
+    let poc_vfs = std::path::PathBuf::from("/usr/local/google/home/srachaba/Projects/jj-vfs-poc/target/debug/jjfsd");
+    if poc_vfs.exists() {
+        return poc_vfs;
+    }
+    direct
+}
+
+pub async fn spawn_vfs_mount(workspace_path: &std::path::Path) -> VfsMountGuard {
+    let mount_dir = tempfile::tempdir().expect("Failed to create tempdir for vfs mount");
+    let vfs_bin = find_jjfsd_bin();
+    let mut cmd = tokio::process::Command::new(vfs_bin);
+    cmd.arg(mount_dir.path());
+    cmd.arg(workspace_path);
+    cmd.env("JJ_USER", "Test User");
+    cmd.env("JJ_EMAIL", "test.user@example.com");
+    let mut child = cmd.spawn().expect("Failed to spawn jjfsd");
+
+    let commits_dir = mount_dir.path().join("commits");
+    let mut ready = false;
+    for _ in 0..50 {
+        if commits_dir.exists() {
+            ready = true;
+            break;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("jjfsd exited prematurely with status: {:?}", status);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "VFS mount point did not become ready in time");
+
+    VfsMountGuard {
+        child: Some(child),
+        mount_dir,
     }
 }
