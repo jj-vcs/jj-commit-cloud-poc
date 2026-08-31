@@ -21,6 +21,8 @@ enum CustomCommands {
 enum CcCommands {
     /// Initialize a remote Commit Cloud repository and local working copy
     Init(commands::init::CcInitArgs),
+    /// Import an existing Git repository into Commit Cloud
+    ImportGit(commands::import_git::ImportGitArgs),
 }
 
 fn create_store_factories() -> StoreFactories {
@@ -47,6 +49,7 @@ async fn run_custom_command(
     match command {
         CustomCommands::Cc { subcommand } => match subcommand {
             CcCommands::Init(args) => commands::init::cmd_cc_init(command_helper, &args).await,
+            CcCommands::ImportGit(args) => commands::import_git::cmd_import_git(&args).await,
         },
     }
 }
