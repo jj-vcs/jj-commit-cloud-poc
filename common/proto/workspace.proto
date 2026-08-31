@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package commit_cloud.workspace;
+
+// Service for managing workspaces and working copy state in Commit Cloud
+service WorkspaceService {
+  // Read workspace state for a given repository and workspace name
+  rpc GetWorkspace (GetWorkspaceRequest) returns (GetWorkspaceResponse);
+
+  // Register or update workspace state (commit, operation, working tree)
+  rpc UpdateWorkspace (UpdateWorkspaceRequest) returns (UpdateWorkspaceResponse);
+
+  // List all active workspaces in a repository
+  rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
+
+  // Detect whether a workspace has un-snapshotted changes (tree_id != commit.root_tree_id)
+  rpc CheckWorkingCopyChanges (CheckWorkingCopyChangesRequest) returns (CheckWorkingCopyChangesResponse);
+}
+
+message WorkspaceState {
+  string repo_id = 1;
+  string user = 2;
+  string workspace_name = 3;
+  bytes commit_id = 4;
+  bytes operation_id = 5;
+  bytes tree_id = 6;
+}
+
+message GetWorkspaceRequest {
+  string repo_id = 1;
+  string user = 2;
+  string workspace_name = 3;
+}
+
+message GetWorkspaceResponse {
+  optional WorkspaceState workspace = 1;
+}
+
+message UpdateWorkspaceRequest {
+  WorkspaceState workspace = 1;
+}
+
+message UpdateWorkspaceResponse {
+  bool success = 1;
+}
+
+message ListWorkspacesRequest {
+  string repo_id = 1;
+}
+
+message ListWorkspacesResponse {
+  repeated WorkspaceState workspaces = 1;
+}
+
+message CheckWorkingCopyChangesRequest {
+  string repo_id = 1;
+  string user = 2;
+  string workspace_name = 3;
+}
+
+message CheckWorkingCopyChangesResponse {
+  bool has_changes = 1;
+  bytes current_tree_id = 2;
+  bytes commit_tree_id = 3;
+}
