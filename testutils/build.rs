@@ -6,6 +6,8 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=../server/src/");
     println!("cargo:rerun-if-changed=../server/Cargo.toml");
+    println!("cargo:rerun-if-changed=../daemon/src/");
+    println!("cargo:rerun-if-changed=../daemon/Cargo.toml");
 
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     
@@ -27,19 +29,22 @@ fn main() {
         "jj-commit-cloud-server",
         "--bin",
         "jj-cc-server",
+        "-p",
+        "jj-commit-cloud-daemon",
+        "--bin",
+        "jj-cc-daemon",
     ]);
     cmd.env("CARGO_TARGET_DIR", &server_target_dir);
 
     let status = cmd
         .status()
-        .expect("Failed to execute cargo build for jj-cc-server");
+        .expect("Failed to execute cargo build for test helper binaries");
 
     if !status.success() {
-        panic!("Failed to build jj-cc-server helper binary");
+        panic!("Failed to build test helper binaries");
     }
 
     // Resolve the main target profile directory (e.g. target/debug/)
-    // out_path is: target/<profile>/build/testutils-<hash>/out/
     let profile_dir = out_path
         .parent().unwrap() // testutils-<hash>
         .parent().unwrap() // build
@@ -47,14 +52,17 @@ fn main() {
 
     let profile_name = profile_dir.file_name().unwrap().to_str().unwrap();
 
-    // The binary is compiled under server_target_dir/<profile_name>/jj-cc-server
-    let compiled_binary_path = server_target_dir
+    let compiled_server_path = server_target_dir
         .join(profile_name)
         .join("jj-cc-server");
+    let dest_server_path = profile_dir.join("jj-cc-server");
+    let _ = fs::remove_file(&dest_server_path);
+    let _ = fs::copy(&compiled_server_path, &dest_server_path);
 
-    let dest_binary_path = profile_dir.join("jj-cc-server");
-
-    let _ = fs::remove_file(&dest_binary_path);
-    fs::copy(&compiled_binary_path, &dest_binary_path)
-        .expect("Failed to copy compiled jj-cc-server binary to target profile directory");
+    let compiled_daemon_path = server_target_dir
+        .join(profile_name)
+        .join("jj-cc-daemon");
+    let dest_daemon_path = profile_dir.join("jj-cc-daemon");
+    let _ = fs::remove_file(&dest_daemon_path);
+    let _ = fs::copy(&compiled_daemon_path, &dest_daemon_path);
 }

@@ -26,3 +26,5 @@ testutils = { path = "../testutils" }
 cc-common = { path = "../common" }
 tonic = "0.12.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
+tower = "0.4"
+hyper-util = { version = "0.1", features = ["tokio"] }
