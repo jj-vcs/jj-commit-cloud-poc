@@ -60,6 +60,8 @@ impl CommitCloudBackend {
             server_url: server_url.to_string(),
             project_id: project_id.clone(),
             repo_id,
+            use_daemon: true,
+            daemon_socket: None,
         };
         fs::write(&config_path, toml::to_string_pretty(&config)?)?;
 
