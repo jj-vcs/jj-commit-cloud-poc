@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use cc_common::backend::*;
 use cc_common::op_store::*;
+use cc_common::workspace::WorkspaceState;
 use prost::Message;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
@@ -412,6 +413,92 @@ impl Store for SqliteStore {
                 heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
             }
             Ok(heads)
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn get_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<Option<WorkspaceState>> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let user = user.to_string();
+        let workspace_name = workspace_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT commit_id, operation_id, tree_id FROM workspaces WHERE repo_id = ?1 AND user = ?2 AND workspace_name = ?3")
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let res: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = stmt
+                .query_row(params![repo_id, user, workspace_name], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            Ok(res.map(|(commit_id, operation_id, tree_id)| WorkspaceState {
+                repo_id,
+                user,
+                workspace_name,
+                commit_id,
+                operation_id,
+                tree_id,
+            }))
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn put_workspace(&self, workspace: WorkspaceState) -> StoreResult<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO workspaces (repo_id, user, workspace_name, commit_id, operation_id, tree_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    workspace.repo_id,
+                    workspace.user,
+                    workspace.workspace_name,
+                    workspace.commit_id,
+                    workspace.operation_id,
+                    workspace.tree_id,
+                ],
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT user, workspace_name, commit_id, operation_id, tree_id FROM workspaces WHERE repo_id = ?1")
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![repo_id], |row| {
+                    Ok(WorkspaceState {
+                        repo_id: repo_id.clone(),
+                        user: row.get(0)?,
+                        workspace_name: row.get(1)?,
+                        commit_id: row.get(2)?,
+                        operation_id: row.get(3)?,
+                        tree_id: row.get(4)?,
+                    })
+                })
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let mut workspaces = Vec::new();
+            for r in rows {
+                workspaces.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
+            }
+            Ok(workspaces)
         })
         .await
         .map_err(|e| StoreError::Task(e.to_string()))?
