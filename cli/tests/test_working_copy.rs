@@ -261,3 +261,66 @@ async fn test_vfs_commit_cloud_working_copy_succeeds() {
         "Physical disk should still have 0 files"
     );
 }
+
+#[tokio::test]
+async fn test_delete_workspace_succeeds() {
+    use cc_common::workspace::{DeleteWorkspaceRequest, ListWorkspacesRequest};
+
+    let ws = TestWorkspace::init().await;
+
+    let config_path = ws.repo_path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let config: toml::Value = toml::from_str(&config_str).unwrap();
+    let repo_id = config.get("repo_id").unwrap().as_str().unwrap().to_string();
+
+    let mut client = WorkspaceServiceClient::connect(ws.server_url().to_string())
+        .await
+        .expect("Failed to connect to WorkspaceService");
+
+    let user = "test.user@example.com".to_string();
+
+    // 1. Verify workspace exists
+    let response = client
+        .get_workspace(GetWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to get workspace")
+        .into_inner();
+    assert!(response.workspace.is_some());
+
+    // 2. Delete workspace
+    let del_resp = client
+        .delete_workspace(DeleteWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to delete workspace")
+        .into_inner();
+    assert!(del_resp.success);
+
+    // 3. Verify workspace is gone from database
+    let response = client
+        .get_workspace(GetWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to query workspace")
+        .into_inner();
+    assert!(response.workspace.is_none());
+
+    let list_resp = client
+        .list_workspaces(ListWorkspacesRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .expect("Failed to list workspaces")
+        .into_inner();
+    assert!(list_resp.workspaces.is_empty());
+}

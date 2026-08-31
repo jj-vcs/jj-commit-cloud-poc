@@ -92,4 +92,20 @@ impl WorkspaceService for CommitCloudWorkspaceService {
             commit_tree_id,
         }))
     }
+
+    async fn delete_workspace(
+        &self,
+        request: Request<DeleteWorkspaceRequest>,
+    ) -> Result<Response<DeleteWorkspaceResponse>, Status> {
+        let req = request.into_inner();
+        info!(
+            "Delete workspace for repo_id '{}', user '{}', workspace '{}'",
+            req.repo_id, req.user, req.workspace_name
+        );
+        let success = self
+            .store
+            .delete_workspace(&req.repo_id, &req.user, &req.workspace_name)
+            .await?;
+        Ok(Response::new(DeleteWorkspaceResponse { success }))
+    }
 }
