@@ -90,5 +90,11 @@ pub trait Store: Send + Sync {
         workspace_name: &str,
     ) -> StoreResult<Option<WorkspaceState>>;
     async fn put_workspace(&self, workspace: WorkspaceState) -> StoreResult<()>;
+    async fn delete_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<bool>;
     async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>>;
 }

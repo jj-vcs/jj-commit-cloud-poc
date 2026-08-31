@@ -261,3 +261,218 @@ async fn test_vfs_commit_cloud_working_copy_succeeds() {
         "Physical disk should still have 0 files"
     );
 }
+
+#[tokio::test]
+async fn test_delete_workspace_succeeds() {
+    use cc_common::workspace::{DeleteWorkspaceRequest, ListWorkspacesRequest};
+
+    let ws = TestWorkspace::init().await;
+
+    let config_path = ws.repo_path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let config: toml::Value = toml::from_str(&config_str).unwrap();
+    let repo_id = config.get("repo_id").unwrap().as_str().unwrap().to_string();
+
+    let mut client = WorkspaceServiceClient::connect(ws.server_url().to_string())
+        .await
+        .expect("Failed to connect to WorkspaceService");
+
+    let user = "test.user@example.com".to_string();
+
+    // Verify workspace exists
+    let response = client
+        .get_workspace(GetWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to get workspace")
+        .into_inner();
+    assert!(response.workspace.is_some());
+
+    // Delete workspace
+    let del_resp = client
+        .delete_workspace(DeleteWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to delete workspace")
+        .into_inner();
+    assert!(del_resp.success);
+
+    // Verify workspace is gone from database
+    let response = client
+        .get_workspace(GetWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: user.clone(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to query workspace")
+        .into_inner();
+    assert!(response.workspace.is_none());
+
+    let list_resp = client
+        .list_workspaces(ListWorkspacesRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .expect("Failed to list workspaces")
+        .into_inner();
+    assert!(list_resp.workspaces.is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_workspace_nonexistent_returns_false() {
+    use cc_common::workspace::DeleteWorkspaceRequest;
+
+    let ws = TestWorkspace::init().await;
+
+    let config_path = ws.repo_path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let config: toml::Value = toml::from_str(&config_str).unwrap();
+    let repo_id = config.get("repo_id").unwrap().as_str().unwrap().to_string();
+
+    let mut client = WorkspaceServiceClient::connect(ws.server_url().to_string())
+        .await
+        .expect("Failed to connect to WorkspaceService");
+
+    // Attempt to delete a nonexistent workspace name
+    let del_resp = client
+        .delete_workspace(DeleteWorkspaceRequest {
+            repo_id: repo_id.clone(),
+            user: "test.user@example.com".to_string(),
+            workspace_name: "nonexistent_workspace".to_string(),
+        })
+        .await
+        .expect("Failed to call delete_workspace")
+        .into_inner();
+    assert!(!del_resp.success, "Deleting a nonexistent workspace should return success = false");
+
+    // Attempt to delete from a nonexistent repository
+    let del_resp2 = client
+        .delete_workspace(DeleteWorkspaceRequest {
+            repo_id: "nonexistent_repo".to_string(),
+            user: "test.user@example.com".to_string(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to call delete_workspace")
+        .into_inner();
+    assert!(!del_resp2.success, "Deleting from a nonexistent repository should return success = false");
+}
+
+#[tokio::test]
+async fn test_check_working_copy_changes_succeeds() {
+    use cc_common::workspace::CheckWorkingCopyChangesRequest;
+
+    let ws = TestWorkspace::init().await;
+
+    // Create a commit so the commit exists in the store
+    let test_file = ws.repo_path().join("file.txt");
+    fs::write(&test_file, "content").unwrap();
+    let mut cmd = ws.jj_cmd();
+    cmd.args(["describe", "-m", "test commit"]).assert().success();
+
+    let config_path = ws.repo_path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let config: toml::Value = toml::from_str(&config_str).unwrap();
+    let repo_id = config.get("repo_id").unwrap().as_str().unwrap().to_string();
+
+    let mut client = WorkspaceServiceClient::connect(ws.server_url().to_string())
+        .await
+        .expect("Failed to connect to WorkspaceService");
+
+    // Query changes on a workspace after snapshot
+    let response = client
+        .check_working_copy_changes(CheckWorkingCopyChangesRequest {
+            repo_id,
+            user: "test.user@example.com".to_string(),
+            workspace_name: "default".to_string(),
+        })
+        .await
+        .expect("Failed to check working copy changes")
+        .into_inner();
+
+    assert!(!response.has_changes, "Workspace should have no un-snapshotted changes after describe");
+    assert_eq!(response.current_tree_id, response.commit_tree_id);
+}
+
+#[tokio::test]
+async fn test_check_working_copy_changes_nonexistent_workspace_fails() {
+    use cc_common::workspace::CheckWorkingCopyChangesRequest;
+
+    let ws = TestWorkspace::init().await;
+
+    let config_path = ws.repo_path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let config: toml::Value = toml::from_str(&config_str).unwrap();
+    let repo_id = config.get("repo_id").unwrap().as_str().unwrap().to_string();
+
+    let mut client = WorkspaceServiceClient::connect(ws.server_url().to_string())
+        .await
+        .expect("Failed to connect to WorkspaceService");
+
+    // Check changes for a nonexistent workspace
+    let result = client
+        .check_working_copy_changes(CheckWorkingCopyChangesRequest {
+            repo_id,
+            user: "test.user@example.com".to_string(),
+            workspace_name: "nonexistent".to_string(),
+        })
+        .await;
+
+    assert!(result.is_err(), "Expected error when checking changes for nonexistent workspace");
+    let status = result.unwrap_err();
+    assert_eq!(status.code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
+async fn test_workspace_forget_cli() {
+    let ws = TestWorkspace::init().await;
+
+    // Verify workspace list shows default workspace
+    let mut list_cmd = ws.jj_cmd();
+    let output = list_cmd
+        .args(["workspace", "list"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("default"), "Workspace list should include default");
+
+    // Forget the default workspace
+    let mut forget_cmd = ws.jj_cmd();
+    forget_cmd
+        .args(["workspace", "forget", "default"])
+        .assert()
+        .success();
+
+    // Verify workspace list is now empty or default is removed
+    let mut list_cmd2 = ws.jj_cmd();
+    let output2 = list_cmd2
+        .args(["workspace", "list"])
+        .assert()
+        .success();
+    let stdout2 = String::from_utf8_lossy(&output2.get_output().stdout);
+    assert!(!stdout2.contains("default:"), "Workspace list should not show active default workspace");
+}
+
+#[tokio::test]
+async fn test_workspace_forget_nonexistent_cli_warning() {
+    let ws = TestWorkspace::init().await;
+
+    // Attempt to forget a non-existent workspace name via CLI
+    let mut cmd = ws.jj_cmd();
+    let output = cmd
+        .args(["workspace", "forget", "nonexistent_workspace"])
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("No such workspace: nonexistent_workspace"),
+        "stderr should warn about nonexistent workspace, got: {stderr}"
+    );
+}
