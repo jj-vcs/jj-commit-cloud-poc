@@ -13,6 +13,8 @@ pub type FileId = Vec<u8>;
 pub type OpId = Vec<u8>;
 pub type ViewId = Vec<u8>;
 
+use cc_common::workspace::WorkspaceState;
+
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     pub repos: Mutex<HashSet<RepoId>>,
@@ -22,6 +24,7 @@ pub struct MemoryStore {
     pub ops: Mutex<HashMap<RepoId, HashMap<OpId, Operation>>>,
     pub views: Mutex<HashMap<RepoId, HashMap<ViewId, View>>>,
     pub op_heads: Mutex<HashMap<RepoId, Vec<OpId>>>,
+    pub workspaces: Mutex<HashMap<RepoId, HashMap<(String, String), WorkspaceState>>>,
 }
 
 impl MemoryStore {
@@ -155,5 +158,37 @@ impl Store for MemoryStore {
         }
 
         Ok(current_heads.clone())
+    }
+
+    async fn get_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<Option<WorkspaceState>> {
+        let workspaces = self.workspaces.lock().unwrap();
+        Ok(workspaces
+            .get(repo_id)
+            .and_then(|ws| ws.get(&(user.to_string(), workspace_name.to_string())).cloned()))
+    }
+
+    async fn put_workspace(&self, workspace: WorkspaceState) -> StoreResult<()> {
+        let mut workspaces = self.workspaces.lock().unwrap();
+        let repo_workspaces = workspaces
+            .entry(workspace.repo_id.clone())
+            .or_default();
+        repo_workspaces.insert(
+            (workspace.user.clone(), workspace.workspace_name.clone()),
+            workspace,
+        );
+        Ok(())
+    }
+
+    async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>> {
+        let workspaces = self.workspaces.lock().unwrap();
+        Ok(workspaces
+            .get(repo_id)
+            .map(|ws| ws.values().cloned().collect())
+            .unwrap_or_default())
     }
 }
