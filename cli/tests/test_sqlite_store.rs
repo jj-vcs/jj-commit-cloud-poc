@@ -23,6 +23,33 @@ async fn test_sqlite_store_init_and_snapshot_succeeds() {
         .stdout("sqlite store test commit\n");
 }
 
+#[tokio::test]
+async fn test_cli_fails_when_table_does_not_exist() {
+    let workspace = testutils::TestWorkspace::init_sqlite().await;
+    let repo_path = workspace.repo_path();
+
+    // Create a file in the working copy and snapshot it
+    fs::write(repo_path.join("sqlite_test.txt"), "hello sqlite store!\n").unwrap();
+    workspace
+        .jj_cmd()
+        .args(["describe", "-m", "sqlite store test commit"])
+        .assert()
+        .success();
+
+    // Drop the commits table in the SQLite database to simulate missing table
+    {
+        let conn = rusqlite::Connection::open(workspace.db_path()).unwrap();
+        conn.execute("DROP TABLE commits", []).unwrap();
+    }
+
+    // Attempting to read commits via `jj log` fails
+    workspace
+        .jj_cmd()
+        .args(["log", "-r", "@"])
+        .assert()
+        .failure();
+}
+
 #[test]
 fn test_server_fails_when_database_parent_path_is_not_a_directory() {
     let temp_dir = tempfile::tempdir().unwrap();

@@ -29,7 +29,7 @@ impl BackendService for CommitCloudBackendService {
         let req = request.into_inner();
         let repo_id = uuid::Uuid::new_v4().to_string();
         info!("Registering repository: {} (name: {:?})", repo_id, req.name);
-        self.store.register_repo(repo_id.clone(), req.name).await;
+        self.store.register_repo(repo_id.clone(), req.name).await?;
         Ok(tonic::Response::new(RegisterRepositoryResponse { repo_id }))
     }
 
@@ -43,7 +43,7 @@ impl BackendService for CommitCloudBackendService {
 
         ensure_repo_registered_error(self.store.as_ref(), &repo_id, "requesting commits").await?;
 
-        if let Some(commit) = self.store.get_commit(&repo_id, &commit_id).await {
+        if let Some(commit) = self.store.get_commit(&repo_id, &commit_id).await? {
             return Ok(tonic::Response::new(ReadCommitResponse {
                 commit: Some(commit),
             }));
@@ -73,7 +73,7 @@ impl BackendService for CommitCloudBackendService {
         commit.commit_id = commit_id.clone();
         info!("Writing commit {:?} for repo {}", commit_id, repo_id);
 
-        self.store.put_commit(repo_id, commit_id.clone(), commit).await;
+        self.store.put_commit(repo_id, commit_id.clone(), commit).await?;
 
         Ok(tonic::Response::new(WriteCommitResponse { commit_id }))
     }
@@ -95,7 +95,7 @@ impl BackendService for CommitCloudBackendService {
             }));
         }
 
-        if let Some(entries) = self.store.get_tree(&repo_id, &tree_id).await {
+        if let Some(entries) = self.store.get_tree(&repo_id, &tree_id).await? {
             return Ok(tonic::Response::new(ReadTreeResponse {
                 tree_id,
                 entries,
@@ -117,7 +117,7 @@ impl BackendService for CommitCloudBackendService {
 
         let tree_id = compute_git_tree_hash(&req.entries);
 
-        self.store.put_tree(repo_id, tree_id.clone(), req.entries).await;
+        self.store.put_tree(repo_id, tree_id.clone(), req.entries).await?;
 
         Ok(tonic::Response::new(WriteTreeResponse { tree_id }))
     }
@@ -135,7 +135,7 @@ impl BackendService for CommitCloudBackendService {
 
         ensure_repo_registered_error(self.store.as_ref(), &repo_id, "reading files").await?;
 
-        let content = self.store.get_file(&repo_id, &file_id).await.ok_or_else(|| {
+        let content = self.store.get_file(&repo_id, &file_id).await?.ok_or_else(|| {
             tonic::Status::not_found("file should have been present in cloud database")
         })?;
 
@@ -162,7 +162,7 @@ impl BackendService for CommitCloudBackendService {
 
         let file_id = compute_git_blob_hash(&req.content);
 
-        self.store.put_file(repo_id, file_id.clone(), req.content).await;
+        self.store.put_file(repo_id, file_id.clone(), req.content).await?;
 
         Ok(tonic::Response::new(WriteFileResponse { file_id }))
     }
