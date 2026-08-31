@@ -76,3 +76,16 @@ CREATE TABLE IF NOT EXISTS views (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (repo_id, view_id)
 );
+
+-- Workspace metadata store for tracking active named workspaces and working copies
+-- Used when managing working copy checkouts and detecting un-snapshotted changes
+CREATE TABLE IF NOT EXISTS workspaces (
+    repo_id TEXT NOT NULL,
+    user TEXT NOT NULL,
+    workspace_name TEXT NOT NULL,
+    commit_id BLOB NOT NULL,
+    operation_id BLOB NOT NULL,
+    tree_id BLOB NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repo_id, user, workspace_name)
+);
