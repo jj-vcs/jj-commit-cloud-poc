@@ -15,6 +15,9 @@ service WorkspaceService {
 
   // Detect whether a workspace has un-snapshotted changes (tree_id != commit.root_tree_id)
   rpc CheckWorkingCopyChanges (CheckWorkingCopyChangesRequest) returns (CheckWorkingCopyChangesResponse);
+
+  // Delete a workspace from Commit Cloud
+  rpc DeleteWorkspace (DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
 }
 
 message WorkspaceState {
@@ -41,6 +44,16 @@ message UpdateWorkspaceRequest {
 }
 
 message UpdateWorkspaceResponse {
+  bool success = 1;
+}
+
+message DeleteWorkspaceRequest {
+  string repo_id = 1;
+  string user = 2;
+  string workspace_name = 3;
+}
+
+message DeleteWorkspaceResponse {
   bool success = 1;
 }
 
