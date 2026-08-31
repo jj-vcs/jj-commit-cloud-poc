@@ -7,16 +7,19 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cc_common::backend::backend_service_server::BackendServiceServer;
 use cc_common::op_store::op_store_service_server::OpStoreServiceServer;
+use cc_common::workspace::workspace_service_server::WorkspaceServiceServer;
 
 mod backend;
 pub mod error_util;
 mod hash_utils;
 mod op_store;
 pub mod store;
+mod workspace;
 
 use backend::CommitCloudBackendService;
 use op_store::CommitCloudOpStoreService;
 use store::{MemoryStore, Store};
+use workspace::CommitCloudWorkspaceService;
 
 // Storage backend to run the server against.
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -104,11 +107,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
     let backend_service = CommitCloudBackendService::new(store.clone());
     let op_store_service = CommitCloudOpStoreService::new(store.clone());
+    let workspace_service = CommitCloudWorkspaceService::new(store.clone());
 
     Server::builder()
         .add_service(health_service)
         .add_service(BackendServiceServer::new(backend_service))
         .add_service(OpStoreServiceServer::new(op_store_service))
+        .add_service(WorkspaceServiceServer::new(workspace_service))
         .serve_with_incoming_shutdown(incoming, async {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
