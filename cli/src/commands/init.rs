@@ -1,16 +1,17 @@
 use cc_lib::cc_backend::CommitCloudBackend;
 use cc_lib::cc_op_heads_store::CommitCloudOpHeadsStore;
 use cc_lib::cc_op_store::CommitCloudOpStore;
+use cc_lib::cc_working_copy::CommitCloudWorkingCopyFactory;
 use clap::Parser;
+use jj_cli::cli_util::CommandHelper;
 use jj_cli::command_error::{user_error, CommandError};
 use jj_lib::backend::BackendInitError;
-use jj_lib::config::StackedConfig;
 use jj_lib::op_store::RootOperationData;
-use jj_lib::ref_name::WorkspaceName;
+use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::repo::ReadonlyRepo;
 use jj_lib::settings::UserSettings;
 use jj_lib::signing::Signer;
-use jj_lib::workspace::{default_working_copy_factory, Workspace};
+use jj_lib::workspace::Workspace;
 use std::path::Path;
 
 #[derive(Parser, Clone, Debug)]
@@ -24,21 +25,28 @@ pub struct CcInitArgs {
     #[arg(long)]
     pub create: bool,
 
+    /// Workspace name (defaults to "default")
+    #[arg(long, default_value = "default")]
+    pub workspace_name: String,
+
+    /// Working copy type ("commit_cloud" or "local")
+    #[arg(long, default_value = "commit_cloud")]
+    pub working_copy_type: String,
 
     /// Destination directory for the local workspace
     #[arg(default_value = ".")]
     pub destination: String,
 }
 
-pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
+pub async fn cmd_cc_init(
+    command_helper: &CommandHelper,
+    args: &CcInitArgs,
+) -> Result<(), CommandError> {
     let _ = args.create;
     let dest_path = Path::new(&args.destination);
 
-    // Load default user settings and signer (required by Jujutsu engine)
-    let user_settings = UserSettings::from_config(StackedConfig::with_defaults())
-        .map_err(|e| user_error(format!("Failed to initialize settings: {:?}", e)))?;
-    
-    let signer = Signer::from_settings(&user_settings)
+    let user_settings = command_helper.settings();
+    let signer = Signer::from_settings(user_settings)
         .map_err(|e| user_error(format!("Failed to initialize signature signer: {:?}", e)))?;
 
     // Define the backend initializer closure for Workspace
@@ -66,6 +74,18 @@ pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
             Ok(Box::new(op_heads_store) as Box<dyn jj_lib::op_heads_store::OpHeadsStore>)
         };
 
+    let working_copy_factory: Box<dyn jj_lib::working_copy::WorkingCopyFactory> =
+        match args.working_copy_type.as_str() {
+            "commit_cloud" => Box::new(CommitCloudWorkingCopyFactory::new()),
+            "local" => Box::new(jj_lib::local_working_copy::LocalWorkingCopyFactory {}),
+            other => {
+                return Err(user_error(format!(
+                    "Unsupported working copy type: '{other}' (expected 'commit_cloud' or 'local')"
+                )))
+            }
+        };
+    let workspace_name = WorkspaceNameBuf::from(args.workspace_name.clone());
+
     // Delegate workspace creation to Jujutsu workspace engine
     Workspace::init_with_factories(
         &user_settings,
@@ -76,8 +96,8 @@ pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
         &op_heads_store_initializer,
         ReadonlyRepo::default_index_store_initializer(),
         ReadonlyRepo::default_submodule_store_initializer(),
-        &*default_working_copy_factory(),
-        WorkspaceName::DEFAULT.to_owned(),
+        working_copy_factory.as_ref(),
+        workspace_name,
     )
     .await
     .map_err(|e| user_error(format!("Failed to initialize workspace: {:?}", e)))?;
