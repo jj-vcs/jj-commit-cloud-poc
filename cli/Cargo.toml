@@ -25,3 +25,5 @@ tempfile = "3"
 testutils = { path = "../testutils" }
 cc-common = { path = "../common" }
 tonic = "0.12.3"
+tower = "0.4"
+hyper-util = { version = "0.1", features = ["tokio"] }

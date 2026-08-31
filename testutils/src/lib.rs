@@ -280,3 +280,68 @@ pub async fn spawn_vfs_mount(workspace_path: &std::path::Path) -> VfsMountGuard 
         mount_dir,
     }
 }
+
+fn find_daemon_bin() -> std::path::PathBuf {
+    let current_exe = std::env::current_exe().expect("The current test executable path should be retrievable");
+    let target_dir = current_exe
+        .parent().expect("The deps directory should exist")
+        .parent().expect("The target profile directory should exist");
+    let direct = target_dir.join("jj-cc-daemon");
+    if direct.exists() {
+        return direct;
+    }
+    let poc_daemon = target_dir.parent().unwrap().join("jj-commit-cloud-poc/target/debug/jj-cc-daemon");
+    if poc_daemon.exists() {
+        return poc_daemon;
+    }
+    direct
+}
+
+pub struct DaemonGuard {
+    child: Option<tokio::process::Child>,
+    socket_path: std::path::PathBuf,
+    _temp_dir: tempfile::TempDir,
+}
+
+impl DaemonGuard {
+    pub fn socket_path(&self) -> &std::path::Path {
+        &self.socket_path
+    }
+}
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+        }
+        if self.socket_path.exists() {
+            let _ = std::fs::remove_file(&self.socket_path);
+        }
+    }
+}
+
+pub async fn spawn_daemon(server_url: &str) -> DaemonGuard {
+    let temp_dir = tempfile::tempdir().expect("Failed to create tempdir for daemon socket");
+    let socket_path = temp_dir.path().join("daemon.sock");
+    let daemon_bin = find_daemon_bin();
+    let mut cmd = tokio::process::Command::new(daemon_bin);
+    cmd.arg("--server").arg(server_url);
+    cmd.arg("--socket").arg(&socket_path);
+    let child = cmd.spawn().expect("Failed to spawn jj-cc-daemon");
+
+    let mut ready = false;
+    for _ in 0..100 {
+        if socket_path.exists() {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(ready, "Daemon socket did not become ready in time");
+
+    DaemonGuard {
+        child: Some(child),
+        socket_path,
+        _temp_dir: temp_dir,
+    }
+}

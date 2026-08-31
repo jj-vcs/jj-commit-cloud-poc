@@ -1,0 +1,20 @@
+[package]
+name = "jj-commit-cloud-daemon"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "jj-cc-daemon"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal", "process", "time", "sync", "io-util"] }
+clap = { version = "4", features = ["derive"] }
+tonic = "0.12"
+tokio-stream = { version = "0.1", features = ["net"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cc-common = { path = "../common" }
+async-trait = "0.1"
+tower = "0.4"
+hyper-util = { version = "0.1", features = ["tokio"] }
