@@ -53,6 +53,8 @@ impl CommitCloudBackend {
         let config = CommitCloudConfig {
             server_url: server_url.to_string(),
             repo_id: repo_id.clone(),
+            use_daemon: true,
+            daemon_socket: None,
         };
         fs::write(&config_path, toml::to_string_pretty(&config)?)?;
 

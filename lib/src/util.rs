@@ -5,6 +5,14 @@ use std::path::Path;
 pub struct CommitCloudConfig {
     pub server_url: String,
     pub repo_id: String,
+    #[serde(default = "default_use_daemon")]
+    pub use_daemon: bool,
+    #[serde(default)]
+    pub daemon_socket: Option<String>,
+}
+
+fn default_use_daemon() -> bool {
+    true
 }
 
 impl CommitCloudConfig {
@@ -21,6 +29,11 @@ impl CommitCloudConfig {
 
         let mut curr = store_path.to_path_buf();
         for _ in 0..4 {
+            let candidate0 = curr.join(".jj/repo/store/config.toml");
+            if candidate0.exists() {
+                let content = fs::read_to_string(&candidate0)?;
+                return Ok(toml::from_str(&content)?);
+            }
             let candidate1 = curr.join("store").join("config.toml");
             if candidate1.exists() {
                 let content = fs::read_to_string(&candidate1)?;
@@ -43,6 +56,48 @@ impl CommitCloudConfig {
                 store_path.display()
             ),
         )))
+    }
+
+    pub fn save_to_store(
+        &self,
+        store_path: &Path,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let content = toml::to_string_pretty(self)?;
+        let config_path = store_path.join("config.toml");
+        if config_path.exists() {
+            fs::write(&config_path, content)?;
+            return Ok(());
+        }
+
+        let mut curr = store_path.to_path_buf();
+        for _ in 0..4 {
+            let candidate0 = curr.join(".jj/repo/store/config.toml");
+            if candidate0.exists() {
+                fs::write(&candidate0, content)?;
+                return Ok(());
+            }
+            let candidate1 = curr.join("store").join("config.toml");
+            if candidate1.exists() {
+                fs::write(&candidate1, content)?;
+                return Ok(());
+            }
+            let candidate2 = curr.join("repo").join("store").join("config.toml");
+            if candidate2.exists() {
+                fs::write(&candidate2, content)?;
+                return Ok(());
+            }
+            if !curr.pop() {
+                break;
+            }
+        }
+
+        // Fallback: write directly under .jj/repo/store/config.toml
+        let target = store_path.join(".jj/repo/store/config.toml");
+        if let Some(parent) = target.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::write(&target, content)?;
+        Ok(())
     }
 }
 
