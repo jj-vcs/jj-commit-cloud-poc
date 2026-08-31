@@ -2,17 +2,21 @@ use async_trait::async_trait;
 use cc_common::backend::*;
 use cc_common::op_store::*;
 use prost::Message;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::Store;
+use super::{Store, StoreError, StoreResult};
 
 #[derive(Clone)]
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
 }
 
+
+// SqliteStore startup and constructor methods return Result<Self, Error>
+// while the methods on the Store trait return StoreResult<T>. This will 
+// match the startup method return type for the rest of the storage methods. 
 impl SqliteStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
@@ -48,35 +52,37 @@ struct TreeEntryList {
 
 #[async_trait]
 impl Store for SqliteStore {
-    async fn is_repo_registered(&self, repo_id: &str) -> bool {
+    async fn is_repo_registered(&self, repo_id: &str) -> StoreResult<bool> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT 1 FROM repos WHERE repo_id = ?1")
-                .ok()?;
-            stmt.exists(params![repo_id]).ok()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            stmt.exists(params![repo_id])
+                .map_err(|e| StoreError::Read(e.to_string()))
         })
         .await
-        .ok()
-        .flatten()
-        .unwrap_or(false)
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn register_repo(&self, repo_id: String, name: Option<String>) {
+    async fn register_repo(&self, repo_id: String, name: Option<String>) -> StoreResult<()> {
         let conn = self.conn.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR IGNORE INTO repos (repo_id, name) VALUES (?1, ?2)",
                 params![repo_id, name],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> Option<Commit> {
+    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         let commit_id = commit_id.to_vec();
@@ -84,32 +90,48 @@ impl Store for SqliteStore {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT data FROM commits WHERE repo_id = ?1 AND commit_id = ?2")
-                .ok()?;
-            let data: Vec<u8> = stmt
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let data: Option<Vec<u8>> = stmt
                 .query_row(params![repo_id, commit_id], |row| row.get(0))
-                .ok()?;
-            Commit::decode(data.as_slice()).ok()
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            match data {
+                Some(bytes) => Ok(Some(
+                    Commit::decode(bytes.as_slice())
+                        .map_err(|e| StoreError::Decode(e.to_string()))?,
+                )),
+                None => Ok(None),
+            }
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn put_commit(&self, repo_id: String, commit_id: Vec<u8>, commit: Commit) {
+    async fn put_commit(
+        &self,
+        repo_id: String,
+        commit_id: Vec<u8>,
+        commit: Commit,
+    ) -> StoreResult<()> {
         let conn = self.conn.clone();
         let mut buf = Vec::new();
-        commit.encode(&mut buf).unwrap();
-        let _ = tokio::task::spawn_blocking(move || {
+        commit
+            .encode(&mut buf)
+            .map_err(|e| StoreError::Encode(e.to_string()))?;
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO commits (repo_id, commit_id, data) VALUES (?1, ?2, ?3)",
                 params![repo_id, commit_id, buf],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> Option<Vec<TreeEntry>> {
+    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         let tree_id = tree_id.to_vec();
@@ -117,34 +139,49 @@ impl Store for SqliteStore {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT data FROM trees WHERE repo_id = ?1 AND tree_id = ?2")
-                .ok()?;
-            let data: Vec<u8> = stmt
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let data: Option<Vec<u8>> = stmt
                 .query_row(params![repo_id, tree_id], |row| row.get(0))
-                .ok()?;
-            let list = TreeEntryList::decode(data.as_slice()).ok()?;
-            Some(list.entries)
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            match data {
+                Some(bytes) => {
+                    let list = TreeEntryList::decode(bytes.as_slice())
+                        .map_err(|e| StoreError::Decode(e.to_string()))?;
+                    Ok(Some(list.entries))
+                }
+                None => Ok(None),
+            }
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn put_tree(&self, repo_id: String, tree_id: Vec<u8>, entries: Vec<TreeEntry>) {
+    async fn put_tree(
+        &self,
+        repo_id: String,
+        tree_id: Vec<u8>,
+        entries: Vec<TreeEntry>,
+    ) -> StoreResult<()> {
         let conn = self.conn.clone();
         let list = TreeEntryList { entries };
         let mut buf = Vec::new();
-        list.encode(&mut buf).unwrap();
-        let _ = tokio::task::spawn_blocking(move || {
+        list.encode(&mut buf)
+            .map_err(|e| StoreError::Encode(e.to_string()))?;
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO trees (repo_id, tree_id, data) VALUES (?1, ?2, ?3)",
                 params![repo_id, tree_id, buf],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> Option<Vec<u8>> {
+    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         let file_id = file_id.to_vec();
@@ -152,28 +189,36 @@ impl Store for SqliteStore {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT data FROM files WHERE repo_id = ?1 AND file_id = ?2")
-                .ok()?;
+                .map_err(|e| StoreError::Read(e.to_string()))?;
             stmt.query_row(params![repo_id, file_id], |row| row.get(0))
-                .ok()
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn put_file(&self, repo_id: String, file_id: Vec<u8>, content: Vec<u8>) {
+    async fn put_file(
+        &self,
+        repo_id: String,
+        file_id: Vec<u8>,
+        content: Vec<u8>,
+    ) -> StoreResult<()> {
         let conn = self.conn.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO files (repo_id, file_id, data) VALUES (?1, ?2, ?3)",
                 params![repo_id, file_id, content],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_operation(&self, repo_id: &str, op_id: &[u8]) -> Option<Operation> {
+    async fn get_operation(&self, repo_id: &str, op_id: &[u8]) -> StoreResult<Option<Operation>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         let op_id = op_id.to_vec();
@@ -181,32 +226,47 @@ impl Store for SqliteStore {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT data FROM operations WHERE repo_id = ?1 AND op_id = ?2")
-                .ok()?;
-            let data: Vec<u8> = stmt
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let data: Option<Vec<u8>> = stmt
                 .query_row(params![repo_id, op_id], |row| row.get(0))
-                .ok()?;
-            Operation::decode(data.as_slice()).ok()
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            match data {
+                Some(bytes) => Ok(Some(
+                    Operation::decode(bytes.as_slice())
+                        .map_err(|e| StoreError::Decode(e.to_string()))?,
+                )),
+                None => Ok(None),
+            }
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn put_operation(&self, repo_id: String, op_id: Vec<u8>, op: Operation) {
+    async fn put_operation(
+        &self,
+        repo_id: String,
+        op_id: Vec<u8>,
+        op: Operation,
+    ) -> StoreResult<()> {
         let conn = self.conn.clone();
         let mut buf = Vec::new();
-        op.encode(&mut buf).unwrap();
-        let _ = tokio::task::spawn_blocking(move || {
+        op.encode(&mut buf)
+            .map_err(|e| StoreError::Encode(e.to_string()))?;
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO operations (repo_id, op_id, data) VALUES (?1, ?2, ?3)",
                 params![repo_id, op_id, buf],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_view(&self, repo_id: &str, view_id: &[u8]) -> Option<View> {
+    async fn get_view(&self, repo_id: &str, view_id: &[u8]) -> StoreResult<Option<View>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         let view_id = view_id.to_vec();
@@ -214,55 +274,64 @@ impl Store for SqliteStore {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT data FROM views WHERE repo_id = ?1 AND view_id = ?2")
-                .ok()?;
-            let data: Vec<u8> = stmt
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let data: Option<Vec<u8>> = stmt
                 .query_row(params![repo_id, view_id], |row| row.get(0))
-                .ok()?;
-            View::decode(data.as_slice()).ok()
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            match data {
+                Some(bytes) => Ok(Some(
+                    View::decode(bytes.as_slice())
+                        .map_err(|e| StoreError::Decode(e.to_string()))?,
+                )),
+                None => Ok(None),
+            }
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) {
+    async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) -> StoreResult<()> {
         let conn = self.conn.clone();
         let mut buf = Vec::new();
-        view.encode(&mut buf).unwrap();
-        let _ = tokio::task::spawn_blocking(move || {
+        view.encode(&mut buf)
+            .map_err(|e| StoreError::Encode(e.to_string()))?;
+        tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
-            let _ = conn.execute(
+            conn.execute(
                 "INSERT OR REPLACE INTO views (repo_id, view_id, data) VALUES (?1, ?2, ?3)",
                 params![repo_id, view_id, buf],
-            );
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
         })
-        .await;
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_op_heads(&self, repo_id: &str) -> Option<Vec<Vec<u8>>> {
+    async fn get_op_heads(&self, repo_id: &str) -> StoreResult<Option<Vec<Vec<u8>>>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
                 .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
-                .ok()?;
-            let rows = stmt.query_map(params![repo_id], |row| row.get(0)).ok()?;
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![repo_id], |row| row.get(0))
+                .map_err(|e| StoreError::Read(e.to_string()))?;
             let mut heads = Vec::new();
             for r in rows {
-                if let Ok(id) = r {
-                    heads.push(id);
-                }
+                heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
             }
             if heads.is_empty() {
-                None
+                Ok(None)
             } else {
-                Some(heads)
+                Ok(Some(heads))
             }
         })
         .await
-        .ok()
-        .flatten()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
     async fn update_op_heads(
@@ -270,40 +339,43 @@ impl Store for SqliteStore {
         repo_id: String,
         old_ids: &[Vec<u8>],
         new_id: Vec<u8>,
-    ) -> Vec<Vec<u8>> {
+    ) -> StoreResult<Vec<Vec<u8>>> {
         let conn = self.conn.clone();
         let old_ids = old_ids.to_vec();
         tokio::task::spawn_blocking(move || {
             let mut conn = conn.lock().unwrap();
-            let tx = conn.transaction().ok()?;
+            let tx = conn
+                .transaction()
+                .map_err(|e| StoreError::Write(e.to_string()))?;
             for old in &old_ids {
-                let _ = tx.execute(
+                tx.execute(
                     "DELETE FROM op_heads WHERE repo_id = ?1 AND op_id = ?2",
                     params![repo_id, old],
-                );
+                )
+                .map_err(|e| StoreError::Write(e.to_string()))?;
             }
-            let _ = tx.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO op_heads (repo_id, op_id) VALUES (?1, ?2)",
                 params![repo_id, new_id],
-            );
-            let _ = tx.commit();
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            tx.commit()
+                .map_err(|e| StoreError::Write(e.to_string()))?;
 
             let mut stmt = conn
                 .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
-                .ok()?;
-            let rows = stmt.query_map(params![repo_id], |row| row.get(0)).ok()?;
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![repo_id], |row| row.get(0))
+                .map_err(|e| StoreError::Read(e.to_string()))?;
             let mut heads = Vec::new();
             for r in rows {
-                if let Ok(id) = r {
-                    heads.push(id);
-                }
+                heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
             }
-            Some(heads)
+            Ok(heads)
         })
         .await
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+        .map_err(|e| StoreError::Task(e.to_string()))?
     }
 }
 
@@ -315,14 +387,14 @@ mod tests {
     async fn test_sqlite_file_write_success() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await;
+        store.register_repo(repo_id.clone(), None).await.unwrap();
 
         let file_id = vec![1, 2, 3, 4];
         let content = b"hello file content".to_vec();
 
-        store.put_file(repo_id.clone(), file_id.clone(), content.clone()).await;
+        store.put_file(repo_id.clone(), file_id.clone(), content.clone()).await.unwrap();
 
-        let read = store.get_file(&repo_id, &file_id).await;
+        let read = store.get_file(&repo_id, &file_id).await.unwrap();
         assert_eq!(read, Some(content));
     }
 }
