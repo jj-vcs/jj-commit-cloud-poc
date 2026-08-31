@@ -45,6 +45,8 @@ impl std::error::Error for StoreError {}
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
+use cc_common::workspace::WorkspaceState;
+
 // Use async fn for storage functions to not block server threads for read/write operations as current and future storage backends are implemented
 #[async_trait]
 pub trait Store: Send + Sync {
@@ -110,4 +112,13 @@ pub trait Store: Send + Sync {
         expected_exact_heads: &[Vec<u8>],
         new_id: Vec<u8>,
     ) -> StoreResult<Vec<Vec<u8>>>;
+
+    async fn get_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<Option<WorkspaceState>>;
+    async fn put_workspace(&self, workspace: WorkspaceState) -> StoreResult<()>;
+    async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>>;
 }
