@@ -474,6 +474,30 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
+    async fn delete_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<bool> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let user = user.to_string();
+        let workspace_name = workspace_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let count = conn
+                .execute(
+                    "DELETE FROM workspaces WHERE repo_id = ?1 AND user = ?2 AND workspace_name = ?3",
+                    params![repo_id, user, workspace_name],
+                )
+                .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(count > 0)
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
     async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
