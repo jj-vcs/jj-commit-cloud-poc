@@ -15,10 +15,14 @@ fn main() {
 
     // Set a different target directory for the child Cargo build to avoid deadlocks!
     let server_target_dir = out_path.join("server_target");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR should be set");
+    let workspace_manifest = Path::new(&manifest_dir).parent().unwrap().join("Cargo.toml");
 
     let mut cmd = Command::new(cargo);
     cmd.args([
         "build",
+        "--manifest-path",
+        workspace_manifest.to_str().unwrap(),
         "-p",
         "jj-commit-cloud-server",
         "--bin",
@@ -50,6 +54,7 @@ fn main() {
 
     let dest_binary_path = profile_dir.join("jj-cc-server");
 
+    let _ = fs::remove_file(&dest_binary_path);
     fs::copy(&compiled_binary_path, &dest_binary_path)
         .expect("Failed to copy compiled jj-cc-server binary to target profile directory");
 }

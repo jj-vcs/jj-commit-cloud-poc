@@ -24,11 +24,12 @@ impl CommitCloudBackendService {
 impl BackendService for CommitCloudBackendService {
     async fn register_repository(
         &self,
-        _request: tonic::Request<RegisterRepositoryRequest>,
+        request: tonic::Request<RegisterRepositoryRequest>,
     ) -> Result<tonic::Response<RegisterRepositoryResponse>, tonic::Status> {
+        let req = request.into_inner();
         let repo_id = uuid::Uuid::new_v4().to_string();
-        info!("Registering repository: {}", repo_id);
-        self.store.register_repo(repo_id.clone()).await;
+        info!("Registering repository: {} (name: {:?})", repo_id, req.name);
+        self.store.register_repo(repo_id.clone(), req.name).await;
         Ok(tonic::Response::new(RegisterRepositoryResponse { repo_id }))
     }
 
