@@ -100,6 +100,8 @@ pub async fn spawn_sqlite_server(db_path: &std::path::Path) -> ServerGuard {
 pub struct TestWorkspace {
     server: ServerGuard,
     temp_dir: tempfile::TempDir,
+    _db_dir: Option<tempfile::TempDir>,
+    db_path: Option<std::path::PathBuf>,
 }
 
 impl TestWorkspace {
@@ -126,11 +128,18 @@ impl TestWorkspace {
 
         init_cmd.assert().success();
 
-        TestWorkspace { server, temp_dir }
+        TestWorkspace {
+            server,
+            temp_dir,
+            _db_dir: None,
+            db_path: None,
+        }
     }
 
-    pub async fn init_sqlite(db_path: &std::path::Path) -> Self {
-        let server = spawn_sqlite_server(db_path).await;
+    pub async fn init_sqlite() -> Self {
+        let db_dir = tempfile::tempdir().expect("temporary directory should have been created for sqlite db");
+        let db_path = db_dir.path().join("commit_cloud.db");
+        let server = spawn_sqlite_server(&db_path).await;
         let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
         let repo_path = temp_dir.path();
 
@@ -150,7 +159,18 @@ impl TestWorkspace {
 
         init_cmd.assert().success();
 
-        TestWorkspace { server, temp_dir }
+        TestWorkspace {
+            server,
+            temp_dir,
+            _db_dir: Some(db_dir),
+            db_path: Some(db_path),
+        }
+    }
+
+    pub fn db_path(&self) -> &std::path::Path {
+        self.db_path
+            .as_deref()
+            .expect("db_path should only be called on workspaces initialized with SQLite")
     }
 
     pub fn repo_path(&self) -> &std::path::Path {

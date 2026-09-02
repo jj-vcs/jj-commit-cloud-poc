@@ -1,0 +1,585 @@
+use async_trait::async_trait;
+use cc_common::backend::*;
+use cc_common::op_store::*;
+use prost::Message;
+use rusqlite::{params, Connection};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use super::Store;
+
+// Path to the SQLite database schema file relative to this source file.
+pub const SQLITE_DATABASE_SCHEMA_PATH: &str = "../../db/schema_sqlite.sql";
+// SQLite database schema definition embedded from the schema SQL file.
+pub const SQLITE_DATABASE_SCHEMA: &str = include_str!("../../db/schema_sqlite.sql");
+
+#[derive(Clone)]
+pub struct SqliteStore {
+    // Stored path to the SQLite database file on disk.
+    // We use Option<PathBuf> because the store can either be backed by a real file on disk
+    // (Some(path)), or running completely in RAM for fast unit testing (None).
+    // Storing this path allows the server to know where its database file lives for diagnostics,
+    // logging, and re-opening/reconnecting if the database connection drops or encounters an error.
+    path: Option<std::path::PathBuf>,
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl SqliteStore {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
+        let path_buf = path.as_ref().to_path_buf();
+        let conn = Connection::open(&path_buf)?;
+        let store = Self {
+            path: Some(path_buf),
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        store.init_tables()?;
+        Ok(store)
+    }
+
+    pub fn in_memory() -> Result<Self, rusqlite::Error> {
+        let conn = Connection::open_in_memory()?;
+        let store = Self {
+            path: None,
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        store.init_tables()?;
+        Ok(store)
+    }
+
+    // Returns the path to the database file on disk, or None if running in memory.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    // Reconnects to the SQLite database using the stored path if the connection drops or fails.
+    pub fn reconnect(&self) -> Result<(), rusqlite::Error> {
+        let new_conn = match &self.path {
+            Some(path) => Connection::open(path)?,
+            None => Connection::open_in_memory()?,
+        };
+        new_conn.execute_batch(SQLITE_DATABASE_SCHEMA)?;
+        let mut conn = self.conn.lock().unwrap();
+        *conn = new_conn;
+        Ok(())
+    }
+
+    fn init_tables(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(SQLITE_DATABASE_SCHEMA)?;
+        Ok(())
+    }
+}
+
+#[derive(prost::Message)]
+struct TreeEntryList {
+    #[prost(message, repeated, tag = "1")]
+    pub entries: Vec<TreeEntry>,
+}
+
+#[async_trait]
+impl Store for SqliteStore {
+    async fn is_repo_registered(&self, repo_id: &str) -> bool {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT 1 FROM repos WHERE repo_id = ?1")
+                .ok()?;
+            stmt.exists(params![repo_id]).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+    }
+
+    async fn register_repo(&self, repo_id: String, name: Option<String>) {
+        let conn = self.conn.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO repos (repo_id, name) VALUES (?1, ?2)",
+                params![repo_id, name],
+            );
+        })
+        .await;
+    }
+
+    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> Option<Commit> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let commit_id = commit_id.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT data FROM commits WHERE repo_id = ?1 AND commit_id = ?2")
+                .ok()?;
+            let data: Vec<u8> = stmt
+                .query_row(params![repo_id, commit_id], |row| row.get(0))
+                .ok()?;
+            Commit::decode(data.as_slice()).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn put_commit(&self, repo_id: String, commit_id: Vec<u8>, commit: Commit) {
+        let conn = self.conn.clone();
+        let mut buf = Vec::new();
+        commit.encode(&mut buf).unwrap();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO commits (repo_id, commit_id, data) VALUES (?1, ?2, ?3)",
+                params![repo_id, commit_id, buf],
+            );
+        })
+        .await;
+    }
+
+    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> Option<Vec<TreeEntry>> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let tree_id = tree_id.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT data FROM trees WHERE repo_id = ?1 AND tree_id = ?2")
+                .ok()?;
+            let data: Vec<u8> = stmt
+                .query_row(params![repo_id, tree_id], |row| row.get(0))
+                .ok()?;
+            let list = TreeEntryList::decode(data.as_slice()).ok()?;
+            Some(list.entries)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn put_tree(&self, repo_id: String, tree_id: Vec<u8>, entries: Vec<TreeEntry>) {
+        let conn = self.conn.clone();
+        let list = TreeEntryList { entries };
+        let mut buf = Vec::new();
+        list.encode(&mut buf).unwrap();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO trees (repo_id, tree_id, data) VALUES (?1, ?2, ?3)",
+                params![repo_id, tree_id, buf],
+            );
+        })
+        .await;
+    }
+
+    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> Option<Vec<u8>> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let file_id = file_id.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT data FROM files WHERE repo_id = ?1 AND file_id = ?2")
+                .ok()?;
+            stmt.query_row(params![repo_id, file_id], |row| row.get(0))
+                .ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn put_file(&self, repo_id: String, file_id: Vec<u8>, content: Vec<u8>) {
+        let conn = self.conn.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO files (repo_id, file_id, data) VALUES (?1, ?2, ?3)",
+                params![repo_id, file_id, content],
+            );
+        })
+        .await;
+    }
+
+    async fn get_operation(&self, repo_id: &str, op_id: &[u8]) -> Option<Operation> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let op_id = op_id.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT data FROM operations WHERE repo_id = ?1 AND op_id = ?2")
+                .ok()?;
+            let data: Vec<u8> = stmt
+                .query_row(params![repo_id, op_id], |row| row.get(0))
+                .ok()?;
+            Operation::decode(data.as_slice()).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn put_operation(&self, repo_id: String, op_id: Vec<u8>, op: Operation) {
+        let conn = self.conn.clone();
+        let mut buf = Vec::new();
+        op.encode(&mut buf).unwrap();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO operations (repo_id, op_id, data) VALUES (?1, ?2, ?3)",
+                params![repo_id, op_id, buf],
+            );
+        })
+        .await;
+    }
+
+    async fn get_view(&self, repo_id: &str, view_id: &[u8]) -> Option<View> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        let view_id = view_id.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT data FROM views WHERE repo_id = ?1 AND view_id = ?2")
+                .ok()?;
+            let data: Vec<u8> = stmt
+                .query_row(params![repo_id, view_id], |row| row.get(0))
+                .ok()?;
+            View::decode(data.as_slice()).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) {
+        let conn = self.conn.clone();
+        let mut buf = Vec::new();
+        view.encode(&mut buf).unwrap();
+        let _ = tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO views (repo_id, view_id, data) VALUES (?1, ?2, ?3)",
+                params![repo_id, view_id, buf],
+            );
+        })
+        .await;
+    }
+
+    async fn get_op_heads(&self, repo_id: &str) -> Option<Vec<Vec<u8>>> {
+        let conn = self.conn.clone();
+        let repo_id = repo_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
+                .ok()?;
+            let rows = stmt.query_map(params![repo_id], |row| row.get(0)).ok()?;
+            let mut heads = Vec::new();
+            for r in rows {
+                if let Ok(id) = r {
+                    heads.push(id);
+                }
+            }
+            if heads.is_empty() {
+                None
+            } else {
+                Some(heads)
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn update_op_heads(
+        &self,
+        repo_id: String,
+        old_ids: &[Vec<u8>],
+        new_id: Vec<u8>,
+    ) -> Vec<Vec<u8>> {
+        let conn = self.conn.clone();
+        let old_ids = old_ids.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = conn.lock().unwrap();
+            let tx = conn.transaction().ok()?;
+            for old in &old_ids {
+                let _ = tx.execute(
+                    "DELETE FROM op_heads WHERE repo_id = ?1 AND op_id = ?2",
+                    params![repo_id, old],
+                );
+            }
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO op_heads (repo_id, op_id) VALUES (?1, ?2)",
+                params![repo_id, new_id],
+            );
+            let _ = tx.commit();
+
+            let mut stmt = conn
+                .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
+                .ok()?;
+            let rows = stmt.query_map(params![repo_id], |row| row.get(0)).ok()?;
+            let mut heads = Vec::new();
+            for r in rows {
+                if let Ok(id) = r {
+                    heads.push(id);
+                }
+            }
+            Some(heads)
+        })
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn sample_commit() -> Commit {
+        Commit {
+            commit_id: vec![1, 2, 3],
+            change_id: vec![4, 5, 6],
+            parent_commit_ids: vec![vec![7, 8, 9]],
+            root_tree_id: vec![vec![10, 11, 12]],
+            description: "test commit description".to_string(),
+            author: Some(Signature {
+                name: "Author Name".to_string(),
+                email: "author@example.com".to_string(),
+                timestamp: Some(Timestamp {
+                    millis_since_epoch: 123456789,
+                    tz_offset: 0,
+                }),
+            }),
+            committer: Some(Signature {
+                name: "Committer Name".to_string(),
+                email: "committer@example.com".to_string(),
+                timestamp: Some(Timestamp {
+                    millis_since_epoch: 123456790,
+                    tz_offset: 0,
+                }),
+            }),
+            predecessors: vec![vec![13, 14, 15]],
+            conflict_labels: vec!["label1".to_string()],
+            secure_sig: None,
+        }
+    }
+
+    fn sample_tree_entries() -> Vec<TreeEntry> {
+        vec![
+            TreeEntry {
+                name: "file1.txt".to_string(),
+                value: Some(TreeValue {
+                    value: Some(tree_value::Value::File(File {
+                        id: vec![1, 2, 3],
+                        executable: false,
+                        copy_id: vec![],
+                    })),
+                }),
+            },
+            TreeEntry {
+                name: "dir1".to_string(),
+                value: Some(TreeValue {
+                    value: Some(tree_value::Value::TreeId(vec![4, 5, 6])),
+                }),
+            },
+        ]
+    }
+
+    fn sample_operation() -> Operation {
+        Operation {
+            view_id: vec![1, 2, 3],
+            parents: vec![vec![4, 5, 6]],
+            metadata: Some(OperationMetadata {
+                start_time_millis: 1000,
+                end_time_millis: 2000,
+                description: "test operation".to_string(),
+                is_snapshot: false,
+                workspace_name: Some("default".to_string()),
+                hostname: "localhost".to_string(),
+                username: "user".to_string(),
+                attributes: HashMap::new(),
+            }),
+            commit_predecessors: vec![],
+            commit_predecessors_set: false,
+        }
+    }
+
+    fn sample_view() -> View {
+        let mut wc_commit_ids = HashMap::new();
+        wc_commit_ids.insert("default".to_string(), vec![1, 2, 3]);
+
+        let mut local_bookmarks = HashMap::new();
+        local_bookmarks.insert(
+            "main".to_string(),
+            RefTarget {
+                removes: vec![],
+                adds: vec![RefTargetTerm {
+                    commit_id: vec![4, 5, 6],
+                }],
+            },
+        );
+
+        let mut remote_bookmarks = HashMap::new();
+        remote_bookmarks.insert(
+            "origin/main".to_string(),
+            RemoteRef {
+                target: Some(RefTarget {
+                    removes: vec![],
+                    adds: vec![RefTargetTerm {
+                        commit_id: vec![7, 8, 9],
+                    }],
+                }),
+                is_tracked: true,
+            },
+        );
+
+        View {
+            head_ids: vec![vec![1, 2], vec![3, 4]],
+            wc_commit_ids,
+            local_bookmarks,
+            remote_bookmarks,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_register_and_check_repo_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+
+        assert_eq!(store.is_repo_registered(&repo_id).await, false);
+        store.register_repo(repo_id.clone(), Some("my-repo".to_string())).await;
+        assert_eq!(store.is_repo_registered(&repo_id).await, true);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_file_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let file_id = vec![1, 2, 3, 4];
+        let content = b"hello file content".to_vec();
+
+        assert_eq!(store.get_file(&repo_id, &file_id).await, None);
+        store.put_file(repo_id.clone(), file_id.clone(), content.clone()).await;
+        let read = store.get_file(&repo_id, &file_id).await;
+        assert_eq!(read, Some(content));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_commit_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let commit = sample_commit();
+        let commit_id = commit.commit_id.clone();
+
+        assert_eq!(store.get_commit(&repo_id, &commit_id).await, None);
+        store.put_commit(repo_id.clone(), commit_id.clone(), commit.clone()).await;
+        let read = store.get_commit(&repo_id, &commit_id).await;
+        assert_eq!(read, Some(commit));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_tree_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let tree_entries = sample_tree_entries();
+        let tree_id = vec![10, 20, 30];
+
+        assert_eq!(store.get_tree(&repo_id, &tree_id).await, None);
+        store.put_tree(repo_id.clone(), tree_id.clone(), tree_entries.clone()).await;
+        let read = store.get_tree(&repo_id, &tree_id).await;
+        assert_eq!(read, Some(tree_entries));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_operation_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let op = sample_operation();
+        let op_id = vec![40, 50, 60];
+
+        assert_eq!(store.get_operation(&repo_id, &op_id).await, None);
+        store.put_operation(repo_id.clone(), op_id.clone(), op.clone()).await;
+        let read = store.get_operation(&repo_id, &op_id).await;
+        assert_eq!(read, Some(op));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_view_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let view = sample_view();
+        let view_id = vec![70, 80, 90];
+
+        assert_eq!(store.get_view(&repo_id, &view_id).await, None);
+        store.put_view(repo_id.clone(), view_id.clone(), view.clone()).await;
+        let read = store.get_view(&repo_id, &view_id).await;
+        assert_eq!(read, Some(view));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_put_and_read_op_heads_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        assert_eq!(store.get_op_heads(&repo_id).await, None);
+        let head1 = vec![101];
+        let heads = store.update_op_heads(repo_id.clone(), &[], head1.clone()).await;
+        assert_eq!(heads, vec![head1.clone()]);
+        assert_eq!(store.get_op_heads(&repo_id).await, Some(vec![head1.clone()]));
+
+        let head2 = vec![102];
+        let heads = store.update_op_heads(repo_id.clone(), &[head1], head2.clone()).await;
+        assert_eq!(heads, vec![head2.clone()]);
+        assert_eq!(store.get_op_heads(&repo_id).await, Some(vec![head2]));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_path_getter() {
+        let mem_store = SqliteStore::in_memory().unwrap();
+        assert_eq!(mem_store.path(), None);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.db");
+        let file_store = SqliteStore::open(&file_path).unwrap();
+        assert_eq!(file_store.path(), Some(file_path.as_path()));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_reconnect_preserves_disk_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("reconnect_test.db");
+        let store = SqliteStore::open(&file_path).unwrap();
+
+        let repo_id = "test-reconnect-repo".to_string();
+        store.register_repo(repo_id.clone(), None).await;
+
+        let file_id = vec![10, 20, 30];
+        let content = b"persisted content".to_vec();
+        store.put_file(repo_id.clone(), file_id.clone(), content.clone()).await;
+
+        // Reconnect to the database using the stored path
+        assert!(store.reconnect().is_ok());
+
+        // Verify data is still readable after reconnection
+        let read = store.get_file(&repo_id, &file_id).await;
+        assert_eq!(read, Some(content));
+    }
+}
