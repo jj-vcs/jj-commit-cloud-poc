@@ -4,7 +4,7 @@ use cc_common::op_store::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use super::Store;
+use super::{Store, StoreResult};
 
 pub type RepoId = String;
 pub type CommitId = Vec<u8>;
@@ -32,67 +32,93 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn is_repo_registered(&self, repo_id: &str) -> bool {
-        self.repos.lock().unwrap().contains(repo_id)
+    async fn is_repo_registered(&self, repo_id: &str) -> StoreResult<bool> {
+        Ok(self.repos.lock().unwrap().contains(repo_id))
     }
 
-    async fn register_repo(&self, repo_id: String, _name: Option<String>) {
+    async fn register_repo(&self, repo_id: String, _name: Option<String>) -> StoreResult<()> {
         self.repos.lock().unwrap().insert(repo_id);
+        Ok(())
     }
 
-    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> Option<Commit> {
+    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
         let commits = self.commits.lock().unwrap();
-        commits.get(repo_id)?.get(commit_id).cloned()
+        Ok(commits.get(repo_id).and_then(|m| m.get(commit_id).cloned()))
     }
 
-    async fn put_commit(&self, repo_id: String, commit_id: Vec<u8>, commit: Commit) {
+    async fn put_commit(
+        &self,
+        repo_id: String,
+        commit_id: Vec<u8>,
+        commit: Commit,
+    ) -> StoreResult<()> {
         let mut commits = self.commits.lock().unwrap();
         commits.entry(repo_id).or_default().insert(commit_id, commit);
+        Ok(())
     }
 
-    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> Option<Vec<TreeEntry>> {
+    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
         let trees = self.trees.lock().unwrap();
-        trees.get(repo_id)?.get(tree_id).cloned()
+        Ok(trees.get(repo_id).and_then(|m| m.get(tree_id).cloned()))
     }
 
-    async fn put_tree(&self, repo_id: String, tree_id: Vec<u8>, entries: Vec<TreeEntry>) {
+    async fn put_tree(
+        &self,
+        repo_id: String,
+        tree_id: Vec<u8>,
+        entries: Vec<TreeEntry>,
+    ) -> StoreResult<()> {
         let mut trees = self.trees.lock().unwrap();
         trees.entry(repo_id).or_default().insert(tree_id, entries);
+        Ok(())
     }
 
-    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> Option<Vec<u8>> {
+    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
         let files = self.files.lock().unwrap();
-        files.get(repo_id)?.get(file_id).cloned()
+        Ok(files.get(repo_id).and_then(|m| m.get(file_id).cloned()))
     }
 
-    async fn put_file(&self, repo_id: String, file_id: Vec<u8>, content: Vec<u8>) {
+    async fn put_file(
+        &self,
+        repo_id: String,
+        file_id: Vec<u8>,
+        content: Vec<u8>,
+    ) -> StoreResult<()> {
         let mut files = self.files.lock().unwrap();
         files.entry(repo_id).or_default().insert(file_id, content);
+        Ok(())
     }
 
-    async fn get_operation(&self, repo_id: &str, op_id: &[u8]) -> Option<Operation> {
+    async fn get_operation(&self, repo_id: &str, op_id: &[u8]) -> StoreResult<Option<Operation>> {
         let ops = self.ops.lock().unwrap();
-        ops.get(repo_id)?.get(op_id).cloned()
+        Ok(ops.get(repo_id).and_then(|m| m.get(op_id).cloned()))
     }
 
-    async fn put_operation(&self, repo_id: String, op_id: Vec<u8>, op: Operation) {
+    async fn put_operation(
+        &self,
+        repo_id: String,
+        op_id: Vec<u8>,
+        op: Operation,
+    ) -> StoreResult<()> {
         let mut ops = self.ops.lock().unwrap();
         ops.entry(repo_id).or_default().insert(op_id, op);
+        Ok(())
     }
 
-    async fn get_view(&self, repo_id: &str, view_id: &[u8]) -> Option<View> {
+    async fn get_view(&self, repo_id: &str, view_id: &[u8]) -> StoreResult<Option<View>> {
         let views = self.views.lock().unwrap();
-        views.get(repo_id)?.get(view_id).cloned()
+        Ok(views.get(repo_id).and_then(|m| m.get(view_id).cloned()))
     }
 
-    async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) {
+    async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) -> StoreResult<()> {
         let mut views = self.views.lock().unwrap();
         views.entry(repo_id).or_default().insert(view_id, view);
+        Ok(())
     }
 
-    async fn get_op_heads(&self, repo_id: &str) -> Option<Vec<OpId>> {
+    async fn get_op_heads(&self, repo_id: &str) -> StoreResult<Option<Vec<OpId>>> {
         let op_heads = self.op_heads.lock().unwrap();
-        op_heads.get(repo_id).cloned()
+        Ok(op_heads.get(repo_id).cloned())
     }
 
     // Updates op heads by removing old superseded heads and appending new_id, while preserving concurrent sibling heads.
@@ -102,7 +128,7 @@ impl Store for MemoryStore {
         repo_id: String,
         old_ids: &[Vec<u8>],
         new_id: Vec<u8>,
-    ) -> Vec<OpId> {
+    ) -> StoreResult<Vec<OpId>> {
         let mut op_heads = self.op_heads.lock().unwrap();
         let current_heads = op_heads
             .entry(repo_id)
@@ -128,6 +154,6 @@ impl Store for MemoryStore {
             }
         }
 
-        current_heads.clone()
+        Ok(current_heads.clone())
     }
 }

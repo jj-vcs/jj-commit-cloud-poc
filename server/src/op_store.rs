@@ -39,7 +39,7 @@ impl OpStoreService for CommitCloudOpStoreService {
         if let Some(op) = self
             .store
             .get_operation(&req.repo_id, &req.operation_id)
-            .await
+            .await?
         {
             return Ok(tonic::Response::new(ReadOperationResponse {
                 operation: Some(op),
@@ -93,7 +93,7 @@ impl OpStoreService for CommitCloudOpStoreService {
 
         self.store
             .put_operation(req.repo_id, op_id.clone(), op)
-            .await;
+            .await?;
 
         Ok(tonic::Response::new(WriteOperationResponse {
             operation_id: op_id,
@@ -113,7 +113,7 @@ impl OpStoreService for CommitCloudOpStoreService {
 
         ensure_repo_registered_error(self.store.as_ref(), &req.repo_id, "reading views").await?;
 
-        if let Some(v) = self.store.get_view(&req.repo_id, &req.view_id).await {
+        if let Some(v) = self.store.get_view(&req.repo_id, &req.view_id).await? {
             return Ok(tonic::Response::new(ReadViewResponse {
                 view_id: req.view_id.clone(),
                 view: Some(v),
@@ -157,7 +157,7 @@ impl OpStoreService for CommitCloudOpStoreService {
 
         self.store
             .put_view(req.repo_id, view_id.clone(), view)
-            .await;
+            .await?;
 
         Ok(tonic::Response::new(WriteViewResponse { view_id }))
     }
@@ -175,7 +175,7 @@ impl OpStoreService for CommitCloudOpStoreService {
         let heads = self
             .store
             .get_op_heads(&req.repo_id)
-            .await
+            .await?
             .unwrap_or_else(|| vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()]);
 
         Ok(tonic::Response::new(GetOpHeadsResponse {
@@ -196,7 +196,7 @@ impl OpStoreService for CommitCloudOpStoreService {
         let current_heads = self
             .store
             .update_op_heads(req.repo_id, &req.old_op_head_ids, req.new_op_head_id)
-            .await;
+            .await?;
 
         Ok(tonic::Response::new(UpdateOpHeadsResponse {
             current_op_head_ids: current_heads,
