@@ -8,6 +8,7 @@ impl From<StoreError> for tonic::Status {
         let msg = err.to_string();
         match err {
             StoreError::Decode(_) => tonic::Status::data_loss(msg),
+            StoreError::CasConflict(_) => tonic::Status::aborted(msg),
             StoreError::Read(_)
             | StoreError::Write(_)
             | StoreError::Encode(_)
