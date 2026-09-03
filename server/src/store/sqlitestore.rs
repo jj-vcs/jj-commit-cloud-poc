@@ -373,7 +373,7 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn update_op_heads(
+    async fn update_op_heads_append_row(
         &self,
         repo_id: String,
         old_ids: &[Vec<u8>],
@@ -384,15 +384,46 @@ impl Store for SqliteStore {
         tokio::task::spawn_blocking(move || {
             let mut conn = conn.lock().unwrap();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(|e| StoreError::Write(e.to_string()))?;
-            for old in &old_ids {
-                tx.execute(
-                    "DELETE FROM op_heads WHERE repo_id = ?1 AND op_id = ?2",
-                    params![repo_id, old],
-                )
-                .map_err(|e| StoreError::Write(e.to_string()))?;
+
+            let current_heads = {
+                let mut stmt = tx
+                    .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
+                    .map_err(|e| StoreError::Read(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![repo_id], |row| row.get(0))
+                    .map_err(|e| StoreError::Read(e.to_string()))?;
+                let mut current_heads = Vec::new();
+                for r in rows {
+                    current_heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
+                }
+
+                if current_heads.is_empty() {
+                    current_heads.push(cc_common::ROOT_OPERATION_ID_BYTES.to_vec());
+                }
+                current_heads
+            };
+
+            if !old_ids.is_empty() {
+                for old in &old_ids {
+                    if !current_heads.contains(old) {
+                        return Err(StoreError::CasConflict(format!(
+                            "write race detected on stale old_op_head_ids: head {} no longer active in repo {}",
+                            hex::encode(old),
+                            repo_id
+                        )));
+                    }
+                }
+                for old in &old_ids {
+                    tx.execute(
+                        "DELETE FROM op_heads WHERE repo_id = ?1 AND op_id = ?2",
+                        params![repo_id, old],
+                    )
+                    .map_err(|e| StoreError::Write(e.to_string()))?;
+                }
             }
+
             tx.execute(
                 "INSERT OR REPLACE INTO op_heads (repo_id, op_id) VALUES (?1, ?2)",
                 params![repo_id, new_id],
@@ -412,6 +443,72 @@ impl Store for SqliteStore {
                 heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
             }
             Ok(heads)
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn update_op_heads_compare_and_swap(
+        &self,
+        repo_id: String,
+        expected_exact_heads: &[Vec<u8>],
+        new_id: Vec<u8>,
+    ) -> StoreResult<Vec<Vec<u8>>> {
+        let conn = self.conn.clone();
+        let expected_exact_heads = expected_exact_heads.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = conn.lock().unwrap();
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(|e| StoreError::Write(e.to_string()))?;
+
+            let current_heads = {
+                let mut stmt = tx
+                    .prepare("SELECT op_id FROM op_heads WHERE repo_id = ?1")
+                    .map_err(|e| StoreError::Read(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![repo_id], |row| row.get(0))
+                    .map_err(|e| StoreError::Read(e.to_string()))?;
+                let mut current_heads = Vec::new();
+                for r in rows {
+                    current_heads.push(r.map_err(|e| StoreError::Read(e.to_string()))?);
+                }
+
+                if current_heads.is_empty() {
+                    current_heads.push(cc_common::ROOT_OPERATION_ID_BYTES.to_vec());
+                }
+                current_heads
+            };
+
+            let current_set: std::collections::HashSet<Vec<u8>> =
+                current_heads.into_iter().collect();
+            let expected_set: std::collections::HashSet<Vec<u8>> =
+                expected_exact_heads.into_iter().collect();
+
+            if current_set != expected_set {
+                return Err(StoreError::CasConflict(format!(
+                    "reconciliation CAS conflict for repo {repo_id}: expected heads {expected_set:?}, found {current_set:?}"
+                )));
+            }
+
+            for old in &expected_set {
+                tx.execute(
+                    "DELETE FROM op_heads WHERE repo_id = ?1 AND op_id = ?2",
+                    params![repo_id, old],
+                )
+                .map_err(|e| StoreError::Write(e.to_string()))?;
+            }
+
+            tx.execute(
+                "INSERT OR REPLACE INTO op_heads (repo_id, op_id) VALUES (?1, ?2)",
+                params![repo_id, new_id],
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+
+            tx.commit()
+                .map_err(|e| StoreError::Write(e.to_string()))?;
+
+            Ok(vec![new_id])
         })
         .await
         .map_err(|e| StoreError::Task(e.to_string()))?
@@ -634,14 +731,58 @@ mod tests {
 
         assert_eq!(store.get_op_heads(&repo_id).await.unwrap(), None);
         let head1 = vec![101];
-        let heads = store.update_op_heads(repo_id.clone(), &[], head1.clone()).await.unwrap();
+        let heads = store.update_op_heads_append_row(repo_id.clone(), &[], head1.clone()).await.unwrap();
         assert_eq!(heads, vec![head1.clone()]);
         assert_eq!(store.get_op_heads(&repo_id).await.unwrap(), Some(vec![head1.clone()]));
 
         let head2 = vec![102];
-        let heads = store.update_op_heads(repo_id.clone(), &[head1], head2.clone()).await.unwrap();
+        let heads = store.update_op_heads_append_row(repo_id.clone(), &[head1], head2.clone()).await.unwrap();
         assert_eq!(heads, vec![head2.clone()]);
         assert_eq!(store.get_op_heads(&repo_id).await.unwrap(), Some(vec![head2]));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_compare_and_swap_op_heads_succeeds() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo-exact".to_string();
+        store.register_repo(repo_id.clone(), None).await.unwrap();
+
+        let head1 = vec![201];
+        let head2 = vec![202];
+        store.update_op_heads_append_row(repo_id.clone(), &[], head1.clone()).await.unwrap();
+        store.update_op_heads_append_row(repo_id.clone(), &[], head2.clone()).await.unwrap();
+
+        let merged_head = vec![203];
+        let res = store
+            .update_op_heads_compare_and_swap(repo_id.clone(), &[head1.clone(), head2.clone()], merged_head.clone())
+            .await
+            .unwrap();
+        assert_eq!(res, vec![merged_head.clone()]);
+        assert_eq!(store.get_op_heads(&repo_id).await.unwrap(), Some(vec![merged_head]));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_compare_and_swap_op_heads_fails_on_mismatch() {
+        let store = SqliteStore::in_memory().unwrap();
+        let repo_id = "test-repo-exact-mismatch".to_string();
+        store.register_repo(repo_id.clone(), None).await.unwrap();
+
+        let head1 = vec![201];
+        let head2 = vec![202];
+        let head3 = vec![203];
+        store.update_op_heads_append_row(repo_id.clone(), &[], head1.clone()).await.unwrap();
+        store.update_op_heads_append_row(repo_id.clone(), &[], head2.clone()).await.unwrap();
+        store.update_op_heads_append_row(repo_id.clone(), &[], head3.clone()).await.unwrap();
+
+        // Attempt exact update expecting only [head1, head2] when head3 is also in DB
+        let err = store
+            .update_op_heads_compare_and_swap(repo_id.clone(), &[head1.clone(), head2.clone()], vec![204])
+            .await
+            .unwrap_err();
+        match &err {
+            StoreError::CasConflict(_) => {}
+            _ => panic!("expected StoreError::CasConflict, got {err:?}"),
+        }
     }
 
     #[tokio::test]
@@ -676,7 +817,7 @@ mod tests {
         assert_eq!(read, Some(content));
     }
 
-    // 1. Write error tests
+    // Write error tests
     #[tokio::test]
     async fn test_sqlite_register_repo_fails_on_readonly_store() {
         let (_dir, store) = create_readonly_store();
@@ -758,7 +899,7 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_update_op_heads_fails_on_readonly_store() {
         let (_dir, store) = create_readonly_store();
-        let err = store.update_op_heads("repo1".to_string(), &[], vec![1u8]).await.unwrap_err();
+        let err = store.update_op_heads_append_row("repo1".to_string(), &[], vec![1u8]).await.unwrap_err();
         match &err {
             StoreError::Write(msg) => {
                 assert_eq!(msg, "attempt to write a readonly database");
@@ -768,7 +909,21 @@ mod tests {
         assert_eq!(err.to_string(), "storage write error: attempt to write a readonly database");
     }
 
-    // 2. Read error tests (missing tables)
+    #[tokio::test]
+    async fn test_sqlite_compare_and_swap_op_heads_fails_on_readonly_store() {
+        let (_dir, store) = create_readonly_store();
+        let root_head = cc_common::ROOT_OPERATION_ID_BYTES.to_vec();
+        let err = store.update_op_heads_compare_and_swap("repo1".to_string(), &[root_head], vec![1u8]).await.unwrap_err();
+        match &err {
+            StoreError::Write(msg) => {
+                assert_eq!(msg, "attempt to write a readonly database");
+            }
+            _ => panic!("expected StoreError::Write, got {err:?}"),
+        }
+        assert_eq!(err.to_string(), "storage write error: attempt to write a readonly database");
+    }
+
+    // Read error tests (missing tables)
     #[tokio::test]
     async fn test_sqlite_is_repo_registered_fails_on_missing_table() {
         let store = SqliteStore::in_memory().unwrap();
@@ -867,7 +1022,7 @@ mod tests {
         assert_eq!(err.to_string(), "storage read error: no such table: op_heads");
     }
 
-    // 3. Decode error tests (corrupted data)
+    // Decode error tests (corrupted data)
     #[tokio::test]
     async fn test_sqlite_get_commit_fails_on_corrupted_data() {
         let store = SqliteStore::in_memory().unwrap();
@@ -936,7 +1091,7 @@ mod tests {
         assert_eq!(err.to_string(), "stored data is corrupt: failed to decode Protobuf message: invalid varint");
     }
 
-    // 4. Encode error test
+    // Encode error test
     #[test]
     fn test_sqlite_store_encode_error() {
         let err = StoreError::Encode("test protobuf encode error".to_string());

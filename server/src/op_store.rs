@@ -195,7 +195,7 @@ impl OpStoreService for CommitCloudOpStoreService {
 
         let current_heads = self
             .store
-            .update_op_heads(req.repo_id, &req.old_op_head_ids, req.new_op_head_id)
+            .update_op_heads_append_row(req.repo_id, &req.old_op_head_ids, req.new_op_head_id)
             .await?;
 
         Ok(tonic::Response::new(UpdateOpHeadsResponse {
