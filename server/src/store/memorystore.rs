@@ -184,6 +184,23 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn delete_workspace(
+        &self,
+        repo_id: &str,
+        user: &str,
+        workspace_name: &str,
+    ) -> StoreResult<bool> {
+        let mut workspaces = self.workspaces.lock().unwrap();
+        if let Some(repo_workspaces) = workspaces.get_mut(repo_id) {
+            let existed = repo_workspaces
+                .remove(&(user.to_string(), workspace_name.to_string()))
+                .is_some();
+            Ok(existed)
+        } else {
+            Ok(false)
+        }
+    }
+
     async fn list_workspaces(&self, repo_id: &str) -> StoreResult<Vec<WorkspaceState>> {
         let workspaces = self.workspaces.lock().unwrap();
         Ok(workspaces
