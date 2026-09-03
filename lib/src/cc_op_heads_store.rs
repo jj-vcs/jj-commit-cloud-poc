@@ -23,12 +23,56 @@ impl CommitCloudOpHeadsStore {
         "commit_cloud"
     }
 
+    pub fn new(server_url: String, repo_id: String) -> Self {
+        Self {
+            server_url,
+            repo_id,
+        }
+    }
+
     pub fn load(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = CommitCloudConfig::load_from_store(store_path)?;
         Ok(Self {
             server_url: config.server_url,
             repo_id: config.repo_id,
         })
+    }
+
+    pub async fn get_op_heads_without_reconciliation(
+        &self,
+    ) -> Result<Vec<OperationId>, OpHeadsStoreError> {
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+
+        run_async(move || async move {
+            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let response = client.get_op_heads(GetOpHeadsRequest { repo_id }).await?;
+            let head_ids: Vec<OperationId> = response
+                .into_inner()
+                .op_head_ids
+                .into_iter()
+                .map(|b| OperationId::from_bytes(&b))
+                .collect();
+            Ok(head_ids)
+        })
+        .map_err(|e| OpHeadsStoreError::Read(e.into()))
+    }
+
+    pub async fn get_op_heads_with_reconciliation(
+        &self,
+    ) -> Result<Vec<OperationId>, OpHeadsStoreError> {
+        let server_url = self.server_url.clone();
+        let repo_id = self.repo_id.clone();
+
+        run_async(move || async move {
+            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let response = client
+                .reconcile_op_heads(ReconcileOpHeadsRequest { repo_id })
+                .await?;
+            let head = OperationId::from_bytes(&response.into_inner().op_head);
+            Ok(vec![head])
+        })
+        .map_err(|e| OpHeadsStoreError::Read(e.into()))
     }
 }
 
@@ -69,21 +113,7 @@ impl OpHeadsStore for CommitCloudOpHeadsStore {
     }
 
     async fn get_op_heads(&self) -> Result<Vec<OperationId>, OpHeadsStoreError> {
-        let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
-
-        run_async(move || async move {
-            let mut client = OpStoreServiceClient::connect(server_url).await?;
-            let response = client.get_op_heads(GetOpHeadsRequest { repo_id }).await?;
-            let head_ids: Vec<OperationId> = response
-                .into_inner()
-                .op_head_ids
-                .into_iter()
-                .map(|b| OperationId::from_bytes(&b))
-                .collect();
-            Ok(head_ids)
-        })
-        .map_err(|e| OpHeadsStoreError::Read(e.into()))
+        self.get_op_heads_with_reconciliation().await
     }
 
     async fn lock(&self) -> Result<Box<dyn OpHeadsStoreLock + '_>, OpHeadsStoreError> {

@@ -6,7 +6,13 @@ use tokio::sync::Barrier;
 use cc_common::backend::backend_service_client::BackendServiceClient;
 use cc_common::backend::RegisterRepositoryRequest;
 use cc_common::op_store::op_store_service_client::OpStoreServiceClient;
-use cc_common::op_store::{GetOpHeadsRequest, UpdateOpHeadsRequest};
+use cc_common::op_store::{
+    GetOpHeadsRequest, Operation, OperationMetadata, ReadOperationRequest,
+    ReconcileOpHeadsRequest, UpdateOpHeadsRequest, WriteOperationRequest,
+};
+use cc_lib::cc_op_heads_store::CommitCloudOpHeadsStore;
+use jj_lib::object_id::ObjectId;
+use jj_lib::op_heads_store::OpHeadsStore;
 use testutils::{spawn_server, spawn_sqlite_server};
 
 /// Helper to register a new repository and return the repo_id.
@@ -247,4 +253,355 @@ async fn test_stress_concurrent_op_heads_writes_sqlite() {
     for op in &inserted_ops {
         assert!(final_set.contains(op), "Expected op head {:?} in SQLite", op);
     }
+}
+
+fn make_test_operation(view_id: Vec<u8>, parents: Vec<Vec<u8>>, description: &str) -> Operation {
+    Operation {
+        view_id,
+        parents,
+        metadata: Some(OperationMetadata {
+            start_time_millis: 1000,
+            end_time_millis: 1000,
+            description: description.to_string(),
+            is_snapshot: false,
+            workspace_name: None,
+            hostname: "test-host".to_string(),
+            username: "test-user".to_string(),
+            attributes: std::collections::HashMap::new(),
+        }),
+        commit_predecessors: vec![],
+        commit_predecessors_set: true,
+    }
+}
+
+/// Verifies that ReconcileOpHeads automatically performs a 3-way view merge on divergent op heads in memory.
+#[tokio::test]
+async fn test_divergent_op_heads_automatic_reconciliation_in_memory() {
+    let server = spawn_server().await;
+    let repo_id = register_test_repo(server.url()).await;
+    let mut op_client = OpStoreServiceClient::connect(server.url().to_string())
+        .await
+        .expect("Failed to connect op store client");
+
+    // Create and write op_branch_a
+    let op_a_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "branch a",
+    );
+    let op_branch_a = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_a_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Create and write op_branch_b
+    let op_b_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "branch b",
+    );
+    let op_branch_b = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_b_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Branch A replaces root with op_branch_a
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+            new_op_head_id: op_branch_a.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Branch B adds op_branch_b concurrently
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![],
+            new_op_head_id: op_branch_b.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Verify 2 divergent heads exist before reconciliation
+    let raw_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(raw_heads.len(), 2);
+    let heads_set: HashSet<Vec<u8>> = raw_heads.into_iter().collect();
+    assert!(heads_set.contains(&op_branch_a));
+    assert!(heads_set.contains(&op_branch_b));
+
+    // Call ReconcileOpHeads RPC to merge divergent operations
+    let reconcile_response = op_client
+        .reconcile_op_heads(ReconcileOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .expect("Reconciliation should succeed")
+        .into_inner();
+
+    let merged_head = reconcile_response.op_head;
+    assert_ne!(merged_head, op_branch_a);
+    assert_ne!(merged_head, op_branch_b);
+
+    // Verify that the server store now has only the single merged op head
+    let post_reconcile_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(post_reconcile_heads, vec![merged_head.clone()]);
+
+    // Read the newly created merged operation and verify its parents are both divergent heads
+    let merged_op = op_client
+        .read_operation(ReadOperationRequest {
+            repo_id: repo_id.clone(),
+            operation_id: merged_head.clone(),
+        })
+        .await
+        .expect("Merged operation should exist in op store")
+        .into_inner()
+        .operation
+        .expect("Operation should not be None");
+
+    let parent_set: HashSet<Vec<u8>> = merged_op.parents.into_iter().collect();
+    assert!(parent_set.contains(&op_branch_a));
+    assert!(parent_set.contains(&op_branch_b));
+    let desc = merged_op.metadata.map(|m| m.description).unwrap_or_default();
+    assert!(desc.contains("reconcile divergent operations"));
+}
+
+/// Verifies that ReconcileOpHeads automatically performs a 3-way view merge on divergent op heads in SQLite.
+#[tokio::test]
+async fn test_divergent_op_heads_automatic_reconciliation_sqlite() {
+    let db_file = NamedTempFile::new().unwrap();
+    let server = spawn_sqlite_server(db_file.path()).await;
+    let repo_id = register_test_repo(server.url()).await;
+    let mut op_client = OpStoreServiceClient::connect(server.url().to_string())
+        .await
+        .expect("Failed to connect op store client");
+
+    // Create and write op_branch_a
+    let op_a_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "sqlite branch a",
+    );
+    let op_branch_a = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_a_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Create and write op_branch_b
+    let op_b_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "sqlite branch b",
+    );
+    let op_branch_b = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_b_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Branch A replaces root with op_branch_a
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+            new_op_head_id: op_branch_a.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Branch B adds op_branch_b concurrently
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![],
+            new_op_head_id: op_branch_b.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Verify 2 divergent heads exist in SQLite
+    let raw_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(raw_heads.len(), 2);
+
+    // Reconcile divergent heads on SQLite
+    let reconcile_response = op_client
+        .reconcile_op_heads(ReconcileOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .expect("SQLite reconciliation should succeed")
+        .into_inner();
+
+    let merged_head = reconcile_response.op_head;
+    assert_ne!(merged_head, op_branch_a);
+    assert_ne!(merged_head, op_branch_b);
+
+    // Verify single head in SQLite
+    let post_reconcile_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(post_reconcile_heads, vec![merged_head.clone()]);
+}
+
+/// Verifies that ReconcileOpHeads is a no-op fast-path when only a single op head exists.
+#[tokio::test]
+async fn test_reconcile_op_heads_idempotent_on_single_head() {
+    let server = spawn_server().await;
+    let repo_id = register_test_repo(server.url()).await;
+    let mut op_client = OpStoreServiceClient::connect(server.url().to_string())
+        .await
+        .expect("Failed to connect op store client");
+
+    let root_head = cc_common::ROOT_OPERATION_ID_BYTES.to_vec();
+
+    // On single root head, ReconcileOpHeads returns root immediately
+    let response = op_client
+        .reconcile_op_heads(ReconcileOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(response.op_head, root_head);
+}
+
+/// Verifies that CommitCloudOpHeadsStore automatically performs 3-way reconciliation on get_op_heads.
+#[tokio::test]
+async fn test_commit_cloud_op_heads_store_auto_reconciles() {
+    let server = spawn_server().await;
+    let repo_id = register_test_repo(server.url()).await;
+    let mut op_client = OpStoreServiceClient::connect(server.url().to_string())
+        .await
+        .expect("Failed to connect op store client");
+
+    // Create and write op_branch_a
+    let op_a_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "client test branch a",
+    );
+    let op_branch_a = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_a_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Create and write op_branch_b
+    let op_b_proto = make_test_operation(
+        cc_common::ROOT_VIEW_ID_BYTES.to_vec(),
+        vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+        "client test branch b",
+    );
+    let op_branch_b = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_b_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Branch A replaces root with op_branch_a
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()],
+            new_op_head_id: op_branch_a.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Branch B adds op_branch_b concurrently
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![],
+            new_op_head_id: op_branch_b.clone(),
+        })
+        .await
+        .unwrap();
+
+    let client_store = CommitCloudOpHeadsStore::new(server.url().to_string(), repo_id.clone());
+
+    // Raw un-reconciled heads contain 2 divergent heads
+    let raw_heads = client_store
+        .get_op_heads_without_reconciliation()
+        .await
+        .unwrap();
+    assert_eq!(raw_heads.len(), 2);
+
+    // Calling get_op_heads_with_reconciliation (which OpHeadsStore::get_op_heads delegates to) runs 3-way reconciliation
+    let reconciled_heads = client_store
+        .get_op_heads_with_reconciliation()
+        .await
+        .unwrap();
+    assert_eq!(reconciled_heads.len(), 1);
+    let merged_id = reconciled_heads[0].as_bytes().to_vec();
+    assert_ne!(merged_id, op_branch_a);
+    assert_ne!(merged_id, op_branch_b);
+
+    // Calling trait get_op_heads returns the reconciled head
+    let trait_heads = client_store.get_op_heads().await.unwrap();
+    assert_eq!(trait_heads.len(), 1);
+    assert_eq!(trait_heads[0].as_bytes(), &merged_id[..]);
+
+    // After reconciliation, un-reconciled heads query now confirms single head in database
+    let post_heads = client_store
+        .get_op_heads_without_reconciliation()
+        .await
+        .unwrap();
+    assert_eq!(post_heads.len(), 1);
+    assert_eq!(post_heads[0].as_bytes(), &merged_id[..]);
 }
