@@ -9,25 +9,40 @@ pub struct CommitCloudConfig {
 
 impl CommitCloudConfig {
     // Resolves the repository configuration file path (`.jj/repo/store/config.toml`).
-    // When called from op_store or op_heads_store, store_path points to .jj/repo/op_store or
-    // .jj/repo/op_heads, so fallback to the parent directory (.jj/repo/store/config.toml).
+    // Searches within store_path, sibling directories, and parent .jj/repo/store/ paths.
     pub fn load_from_store(
         store_path: &Path,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config_path = store_path.join("config.toml");
         if config_path.exists() {
             let content = fs::read_to_string(&config_path)?;
-            Ok(toml::from_str(&content)?)
-        } else if let Some(parent) = store_path.parent() {
-            let store_config = parent.join("store").join("config.toml");
-            let content = fs::read_to_string(&store_config)?;
-            Ok(toml::from_str(&content)?)
-        } else {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "store path should have contained config.toml",
-            )))
+            return Ok(toml::from_str(&content)?);
         }
+
+        let mut curr = store_path.to_path_buf();
+        for _ in 0..4 {
+            let candidate1 = curr.join("store").join("config.toml");
+            if candidate1.exists() {
+                let content = fs::read_to_string(&candidate1)?;
+                return Ok(toml::from_str(&content)?);
+            }
+            let candidate2 = curr.join("repo").join("store").join("config.toml");
+            if candidate2.exists() {
+                let content = fs::read_to_string(&candidate2)?;
+                return Ok(toml::from_str(&content)?);
+            }
+            if !curr.pop() {
+                break;
+            }
+        }
+
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "store path '{}' should have contained config.toml",
+                store_path.display()
+            ),
+        )))
     }
 }
 
