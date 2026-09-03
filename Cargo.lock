@@ -398,6 +398,7 @@ dependencies = [
 name = "cc-common"
 version = "0.1.0"
 dependencies = [
+ "jj-lib",
  "prost 0.13.5",
  "tonic",
  "tonic-build",
