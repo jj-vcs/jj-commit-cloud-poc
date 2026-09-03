@@ -22,6 +22,8 @@ hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 prost = "0.13"
 rusqlite = { version = "0.31", features = ["bundled"] }
+jj-lib = "0.43.0"
+futures = "0.3"
 
 [dev-dependencies]
 assert_cmd = "2.0"

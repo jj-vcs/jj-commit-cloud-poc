@@ -11,6 +11,7 @@ use cc_common::op_store::op_store_service_server::OpStoreServiceServer;
 mod backend;
 pub mod error_util;
 mod hash_utils;
+pub mod jj_lib_adapters;
 mod op_store;
 pub mod store;
 
