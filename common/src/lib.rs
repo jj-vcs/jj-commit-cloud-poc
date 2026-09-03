@@ -6,6 +6,8 @@ pub mod op_store {
     tonic::include_proto!("commit_cloud.op_store");
 }
 
+pub mod conversions;
+
 pub const COMMIT_ID_LENGTH: usize = 20;
 pub const CHANGE_ID_LENGTH: usize = 16;
 pub const OPERATION_ID_LENGTH: usize = 16;
