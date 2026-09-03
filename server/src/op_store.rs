@@ -213,20 +213,10 @@ impl OpStoreService for CommitCloudOpStoreService {
         ensure_repo_registered_error(self.store.as_ref(), &req.repo_id, "reconciling op heads")
             .await?;
 
-        let heads = self
-            .store
-            .get_op_heads(&req.repo_id)
-            .await?
-            .unwrap_or_else(|| vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()]);
+        let head = crate::reconcile_op_heads::reconcile_repo_op_heads(self.store.clone(), &req.repo_id).await?;
 
-        if heads.len() == 1 {
-            return Ok(tonic::Response::new(ReconcileOpHeadsResponse {
-                op_head: heads.into_iter().next().unwrap(),
-            }));
-        }
-
-        Err(tonic::Status::unimplemented(
-            "ReconcileOpHeads is not yet implemented",
-        ))
+        Ok(tonic::Response::new(ReconcileOpHeadsResponse {
+            op_head: head,
+        }))
     }
 }

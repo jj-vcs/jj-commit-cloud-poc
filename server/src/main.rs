@@ -13,6 +13,7 @@ pub mod error_util;
 mod hash_utils;
 pub mod jj_lib_adapters;
 mod op_store;
+pub mod reconcile_op_heads;
 pub mod store;
 
 use backend::CommitCloudBackendService;
