@@ -18,6 +18,8 @@ pub enum StoreError {
     Read(String),
     // A write to the storage backend failed.
     Write(String),
+    // A Compare-And-Swap (CAS) optimistic concurrency conflict occurred.
+    CasConflict(String),
     // Data failed to be encoded into protobuf format.
     Encode(String),
     // Data was retrieved but could not be decoded, indicating corruption.
@@ -31,6 +33,7 @@ impl std::fmt::Display for StoreError {
         match self {
             StoreError::Read(msg) => write!(f, "storage read error: {msg}"),
             StoreError::Write(msg) => write!(f, "storage write error: {msg}"),
+            StoreError::CasConflict(msg) => write!(f, "CAS conflict: {msg}"),
             StoreError::Encode(msg) => write!(f, "storage encode error: {msg}"),
             StoreError::Decode(msg) => write!(f, "stored data is corrupt: {msg}"),
             StoreError::Task(msg) => write!(f, "storage task error: {msg}"),
@@ -74,10 +77,22 @@ pub trait Store: Send + Sync {
     async fn put_view(&self, repo_id: String, view_id: Vec<u8>, view: View) -> StoreResult<()>;
 
     async fn get_op_heads(&self, repo_id: &str) -> StoreResult<Option<Vec<Vec<u8>>>>;
-    async fn update_op_heads(
+    // Updates op heads by removing `old_ids` (if present) and appending `new_id`.
+    // Validates that `old_ids` are currently active to prevent stale client overwrites.
+    async fn update_op_heads_append_row(
         &self,
         repo_id: String,
         old_ids: &[Vec<u8>],
+        new_id: Vec<u8>,
+    ) -> StoreResult<Vec<Vec<u8>>>;
+
+    // Atomically compares the full set of currently active op heads against `expected_exact_heads`
+    // and replaces them entirely with `[new_id]`. Fails immediately with `StoreError::CasConflict`
+    // if the active set does not match `expected_exact_heads`. Used during server-side reconciliation.
+    async fn update_op_heads_compare_and_swap(
+        &self,
+        repo_id: String,
+        expected_exact_heads: &[Vec<u8>],
         new_id: Vec<u8>,
     ) -> StoreResult<Vec<Vec<u8>>>;
 }
