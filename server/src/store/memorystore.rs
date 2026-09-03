@@ -4,7 +4,7 @@ use cc_common::op_store::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use super::{Store, StoreResult};
+use super::{Store, StoreError, StoreResult};
 
 pub type RepoId = String;
 pub type CommitId = Vec<u8>;
@@ -121,9 +121,7 @@ impl Store for MemoryStore {
         Ok(op_heads.get(repo_id).cloned())
     }
 
-    // Updates op heads by removing old superseded heads and appending new_id, while preserving concurrent sibling heads.
-    // This is required for divergent op head resolution down the road—if we wiped out sibling heads here, client-side reconciliation wouldn't receive the divergent heads it needs to merge them.
-    async fn update_op_heads(
+    async fn update_op_heads_append_row(
         &self,
         repo_id: String,
         old_ids: &[Vec<u8>],
@@ -131,7 +129,7 @@ impl Store for MemoryStore {
     ) -> StoreResult<Vec<OpId>> {
         let mut op_heads = self.op_heads.lock().unwrap();
         let current_heads = op_heads
-            .entry(repo_id)
+            .entry(repo_id.clone())
             .or_insert_with(|| vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()]);
 
         if old_ids.is_empty() {
@@ -139,21 +137,48 @@ impl Store for MemoryStore {
                 current_heads.push(new_id);
             }
         } else {
-            let mut removed_any = false;
-            current_heads.retain(|head| {
-                if old_ids.contains(head) {
-                    removed_any = true;
-                    false
-                } else {
-                    true
+            for old in old_ids {
+                if !current_heads.contains(old) {
+                    return Err(StoreError::CasConflict(format!(
+                        "write race detected on stale old_op_head_ids: head {} no longer active in repo {}",
+                        hex::encode(old),
+                        repo_id
+                    )));
                 }
-            });
+            }
 
-            if removed_any && !current_heads.contains(&new_id) {
+            current_heads.retain(|head| !old_ids.contains(head));
+            if !current_heads.contains(&new_id) {
                 current_heads.push(new_id);
             }
         }
 
         Ok(current_heads.clone())
+    }
+
+    async fn update_op_heads_compare_and_swap(
+        &self,
+        repo_id: String,
+        expected_exact_heads: &[Vec<u8>],
+        new_id: Vec<u8>,
+    ) -> StoreResult<Vec<OpId>> {
+        let mut op_heads = self.op_heads.lock().unwrap();
+        let current_heads = op_heads
+            .entry(repo_id.clone())
+            .or_insert_with(|| vec![cc_common::ROOT_OPERATION_ID_BYTES.to_vec()]);
+
+        let current_set: std::collections::HashSet<Vec<u8>> =
+            current_heads.iter().cloned().collect();
+        let expected_set: std::collections::HashSet<Vec<u8>> =
+            expected_exact_heads.iter().cloned().collect();
+
+        if current_set != expected_set {
+            return Err(StoreError::CasConflict(format!(
+                "reconciliation CAS conflict for repo {repo_id}: expected heads {expected_set:?}, found {current_set:?}"
+            )));
+        }
+
+        *current_heads = vec![new_id.clone()];
+        Ok(vec![new_id])
     }
 }
