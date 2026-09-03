@@ -605,3 +605,144 @@ async fn test_commit_cloud_op_heads_store_auto_reconciles() {
     assert_eq!(post_heads.len(), 1);
     assert_eq!(post_heads[0].as_bytes(), &merged_id[..]);
 }
+
+/// Verifies that running a jj CLI command (e.g. `jj op log`) in a repo with
+/// divergent server op heads automatically triggers reconciliation and succeeds without error.
+#[tokio::test]
+async fn test_cli_command_auto_reconciles_divergent_op_heads() {
+    let workspace = testutils::TestWorkspace::init().await;
+    let config = cc_lib::util::CommitCloudConfig::load_from_store(
+        &workspace.repo_path().join(".jj/repo/store"),
+    )
+    .expect("Failed to load repo config");
+
+    let repo_id = config.repo_id;
+    let server_url = config.server_url;
+    let mut op_client = OpStoreServiceClient::connect(server_url)
+        .await
+        .expect("Failed to connect op client");
+
+    // Fetch current single head
+    let current_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(current_heads.len(), 1);
+    let base_head = current_heads[0].clone();
+
+    // Read base operation to get its view_id
+    let base_op = op_client
+        .read_operation(ReadOperationRequest {
+            repo_id: repo_id.clone(),
+            operation_id: base_head.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation
+        .expect("Base operation should exist");
+
+    let base_view_id = base_op.view_id;
+
+    // Create and write two divergent operations pointing to base_head
+    let op_a_proto = make_test_operation(
+        base_view_id.clone(),
+        vec![base_head.clone()],
+        "concurrent cli branch a",
+    );
+    let op_branch_a = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_a_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    let op_b_proto = make_test_operation(
+        base_view_id.clone(),
+        vec![base_head.clone()],
+        "concurrent cli branch b",
+    );
+    let op_branch_b = op_client
+        .write_operation(WriteOperationRequest {
+            repo_id: repo_id.clone(),
+            operation: Some(op_b_proto),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation_id;
+
+    // Inject divergent heads on server:
+    // Branch A replaces base_head with op_branch_a
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![base_head.clone()],
+            new_op_head_id: op_branch_a.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Branch B adds op_branch_b concurrently
+    op_client
+        .update_op_heads(UpdateOpHeadsRequest {
+            repo_id: repo_id.clone(),
+            old_op_head_ids: vec![],
+            new_op_head_id: op_branch_b.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Verify the server store now has 2 divergent heads
+    let raw_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(raw_heads.len(), 2);
+
+    // Run a jj CLI command (`jj op log --no-graph -T description`)
+    // The CLI loads the repo via RepoLoader, which invokes CommitCloudOpHeadsStore::get_op_heads().
+    // Seeing 2 heads, CommitCloudOpHeadsStore calls the ReconcileOpHeads RPC on the server.
+    workspace
+        .jj_cmd()
+        .args(["op", "log", "--no-graph", "-T", "description"])
+        .assert()
+        .success();
+
+    // Verify that the server's op heads were automatically collapsed down to 1 merged head
+    let post_heads = op_client
+        .get_op_heads(GetOpHeadsRequest {
+            repo_id: repo_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .op_head_ids;
+    assert_eq!(post_heads.len(), 1);
+    let final_head = &post_heads[0];
+    assert_ne!(final_head, &op_branch_a);
+    assert_ne!(final_head, &op_branch_b);
+
+    // Verify the merged operation in the server operation log
+    let _merged_op = op_client
+        .read_operation(ReadOperationRequest {
+            repo_id: repo_id.clone(),
+            operation_id: final_head.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .operation
+        .expect("Merged op should exist");
+}
