@@ -1,5 +1,8 @@
 syntax = "proto3";
 
+// TODO: Add strong types for main entities across the protos (e.g., `message OperationId { bytes id_bytes = 1; }`)
+// instead of raw bytes/strings.
+
 package commit_cloud.op_store;
 
 // Service interface for remote Operation Store and OpHeads Store RPCs
@@ -19,6 +22,7 @@ service OpStoreService {
   // OpHeads track the latest operations in the graph, used to find current state or resolve branch conflicts
   rpc GetOpHeads (GetOpHeadsRequest) returns (GetOpHeadsResponse);
   rpc UpdateOpHeads (UpdateOpHeadsRequest) returns (UpdateOpHeadsResponse);
+  rpc ReconcileOpHeads (ReconcileOpHeadsRequest) returns (ReconcileOpHeadsResponse);
 }
 
 // Messages for reading and writing operation log entries
@@ -80,6 +84,14 @@ message UpdateOpHeadsRequest {
 
 message UpdateOpHeadsResponse {
   repeated bytes current_op_head_ids = 1;
+}
+
+message ReconcileOpHeadsRequest {
+  string repo_id = 1;
+}
+
+message ReconcileOpHeadsResponse {
+  bytes op_head = 1;
 }
 
 // Messages representing Operation metadata and graph structure
