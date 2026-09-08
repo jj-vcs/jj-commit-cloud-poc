@@ -84,3 +84,133 @@ async fn test_cc_init_fails_on_invalid_server_addr() {
 
     cmd.assert().failure();
 }
+
+#[tokio::test]
+async fn test_cc_init_with_create_repo_flag() {
+    let server = testutils::spawn_server().await;
+    let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
+    let repo_path = temp_dir.path();
+
+    let mut init_cmd = assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled");
+    init_cmd
+        .current_dir(repo_path)
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args([
+            "cc",
+            "init",
+            "--server",
+            server.url(),
+            "--create-repo",
+            ".",
+        ]);
+
+    init_cmd.assert().success();
+
+    let jj_store_path = repo_path.join(".jj/repo/store");
+    let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
+        .expect("The config.toml file should be readable");
+    let parsed_config: toml::Value = toml::from_str(&config_content)
+        .expect("The config.toml file should be valid TOML");
+    let repo_id_str = parsed_config.get("repo_id")
+        .and_then(|v| v.as_str())
+        .expect("The repo_id field should exist and be a string");
+    uuid::Uuid::parse_str(repo_id_str).expect("The repo_id should be a valid UUID string");
+}
+
+#[tokio::test]
+async fn test_cc_init_with_repo_id_flag() {
+    let workspace1 = testutils::TestWorkspace::init().await;
+    let repo1_path = workspace1.repo_path();
+
+    // Read the repo_id created by workspace1
+    let jj_store_path1 = repo1_path.join(".jj/repo/store");
+    let config_content1 = fs::read_to_string(jj_store_path1.join("config.toml"))
+        .expect("The config.toml file should be readable");
+    let parsed_config1: toml::Value = toml::from_str(&config_content1)
+        .expect("The config.toml file should be valid TOML");
+    let repo_id_str = parsed_config1.get("repo_id")
+        .and_then(|v| v.as_str())
+        .expect("The repo_id field should exist and be a string");
+
+    // Initialize a second workspace pointing to the same existing repo_id
+    let temp_dir2 = tempfile::tempdir().expect("temporary directory should have been created for testing");
+    let repo2_path = temp_dir2.path();
+
+    let mut init_cmd = assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled");
+    init_cmd
+        .current_dir(repo2_path)
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args([
+            "cc",
+            "init",
+            "--server",
+            workspace1.server_url(),
+            "--repo-id",
+            repo_id_str,
+            ".",
+        ]);
+
+    init_cmd.assert().success();
+
+    let jj_store_path2 = repo2_path.join(".jj/repo/store");
+    let config_content2 = fs::read_to_string(jj_store_path2.join("config.toml"))
+        .expect("The config.toml file should be readable");
+    let parsed_config2: toml::Value = toml::from_str(&config_content2)
+        .expect("The config.toml file should be valid TOML");
+    let repo_id_str2 = parsed_config2.get("repo_id")
+        .and_then(|v| v.as_str())
+        .expect("The repo_id field should exist and be a string");
+    assert_eq!(repo_id_str2, repo_id_str);
+}
+
+#[tokio::test]
+async fn test_cc_init_conflicts_create_repo_and_repo_id() {
+    let server = testutils::spawn_server().await;
+    let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
+    let repo_path = temp_dir.path();
+
+    let mut init_cmd = assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled");
+    init_cmd
+        .current_dir(repo_path)
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args([
+            "cc",
+            "init",
+            "--server",
+            server.url(),
+            "--create-repo",
+            "--repo-id",
+            "custom-repo-id",
+            ".",
+        ]);
+
+    init_cmd.assert().failure();
+}
+
+#[tokio::test]
+async fn test_cc_init_conflicts_create_and_repo_id_aliases() {
+    let server = testutils::spawn_server().await;
+    let temp_dir = tempfile::tempdir().expect("temporary directory should have been created for testing");
+    let repo_path = temp_dir.path();
+
+    let mut init_cmd = assert_cmd::Command::cargo_bin("jj").expect("The jj CLI binary should have compiled");
+    init_cmd
+        .current_dir(repo_path)
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args([
+            "cc",
+            "init",
+            "--server",
+            server.url(),
+            "--create",
+            "--repo_id",
+            "custom-repo-id",
+            ".",
+        ]);
+
+    init_cmd.assert().failure();
+}

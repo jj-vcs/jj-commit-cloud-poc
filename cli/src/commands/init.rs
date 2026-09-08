@@ -20,10 +20,13 @@ pub struct CcInitArgs {
     #[arg(long)]
     pub server: String,
 
-    //TODO: Add server side guard for repository creation with --create
-    /// Explicitly create a new remote repository if it does not exist yet
-    #[arg(long)]
-    pub create: bool,
+    /// Explicitly create a new remote repository on the server
+    #[arg(long = "create-repo", alias = "create", conflicts_with = "repo_id")]
+    pub create_repo: bool,
+
+    /// Existing remote repository ID to connect this workspace to
+    #[arg(long = "repo-id", alias = "repo_id", conflicts_with = "create_repo")]
+    pub repo_id: Option<String>,
 
     /// Workspace name (defaults to "default")
     #[arg(long, default_value = "default")]
@@ -42,18 +45,20 @@ pub async fn cmd_cc_init(
     command_helper: &CommandHelper,
     args: &CcInitArgs,
 ) -> Result<(), CommandError> {
-    let _ = args.create;
     let dest_path = Path::new(&args.destination);
 
     let user_settings = command_helper.settings();
     let signer = Signer::from_settings(user_settings)
         .map_err(|e| user_error(format!("Failed to initialize signature signer: {:?}", e)))?;
 
+    let repo_id_opt = args.repo_id.clone();
+    let server_url = args.server.clone();
     // Define the backend initializer closure for Workspace
-    let backend_initializer = |_settings: &UserSettings, store_path: &Path| {
+    let backend_initializer = move |_settings: &UserSettings, store_path: &Path| {
         let backend = CommitCloudBackend::init(
             store_path,
-            &args.server,
+            &server_url,
+            repo_id_opt.as_deref(),
         )
         .map_err(BackendInitError)?;
         Ok(Box::new(backend) as Box<dyn jj_lib::backend::Backend>)

@@ -34,19 +34,24 @@ impl CommitCloudBackend {
     pub fn init(
         store_path: &Path,
         server_url: &str,
+        explicit_repo_id: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
         let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
 
-        let server_url_cloned = server_url.to_string();
-        let repo_id = run_async(move || async move {
-            let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
-            let register_repo_response = client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
-                name: None,
-            })).await?.into_inner();
-            Ok(register_repo_response.repo_id)
-        })?;
+        let repo_id = if let Some(repo_id) = explicit_repo_id {
+            repo_id.to_string()
+        } else {
+            let server_url_cloned = server_url.to_string();
+            run_async(move || async move {
+                let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
+                let register_repo_response = client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
+                    name: None,
+                })).await?.into_inner();
+                Ok(register_repo_response.repo_id)
+            })?
+        };
 
         // Write local config toml
         let config_path = store_path.join("config.toml");
