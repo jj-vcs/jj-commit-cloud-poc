@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use cc_common::op_store::op_store_service_client::OpStoreServiceClient;
 use cc_common::op_store::*;
 use jj_lib::backend::{CommitId, MillisSinceEpoch, Timestamp};
 use jj_lib::object_id::{HexPrefix, ObjectId, PrefixResolution};
@@ -13,6 +12,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::time::SystemTime;
 
+use crate::client::connect_op_store_client;
 use crate::util::{CommitCloudConfig, run_async};
 
 fn ref_target_to_proto(target: &RefTarget) -> cc_common::op_store::RefTarget {
@@ -225,8 +225,7 @@ fn view_from_proto(view: cc_common::op_store::View) -> View {
 
 #[derive(Debug)]
 pub struct CommitCloudOpStore {
-    server_url: String,
-    repo_id: String,
+    config: CommitCloudConfig,
     root_operation_id: OperationId,
 }
 
@@ -238,8 +237,7 @@ impl CommitCloudOpStore {
     pub fn load(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = CommitCloudConfig::load_from_store(store_path)?;
         Ok(Self {
-            server_url: config.server_url,
-            repo_id: config.repo_id,
+            config,
             root_operation_id: OperationId::from_bytes(&cc_common::ROOT_OPERATION_ID_BYTES),
         })
     }
@@ -256,12 +254,12 @@ impl OpStore for CommitCloudOpStore {
     }
 
     async fn read_view(&self, id: &ViewId) -> OpStoreResult<View> {
-        let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let config = self.config.clone();
+        let repo_id = self.config.repo_id.clone();
         let view_id_bytes = id.as_bytes().to_vec();
 
         run_async(move || async move {
-            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let mut client = connect_op_store_client(&config).await?;
             let response = client
                 .read_view(ReadViewRequest {
                     repo_id,
@@ -278,12 +276,12 @@ impl OpStore for CommitCloudOpStore {
     }
 
     async fn write_view(&self, contents: &View) -> OpStoreResult<ViewId> {
-        let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let config = self.config.clone();
+        let repo_id = self.config.repo_id.clone();
         let proto_view = view_to_proto(contents);
 
         run_async(move || async move {
-            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let mut client = connect_op_store_client(&config).await?;
             let response = client
                 .write_view(WriteViewRequest {
                     repo_id,
@@ -297,12 +295,12 @@ impl OpStore for CommitCloudOpStore {
     }
 
     async fn read_operation(&self, id: &OperationId) -> OpStoreResult<Operation> {
-        let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let config = self.config.clone();
+        let repo_id = self.config.repo_id.clone();
         let op_id_bytes = id.as_bytes().to_vec();
 
         run_async(move || async move {
-            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let mut client = connect_op_store_client(&config).await?;
             let response = client
                 .read_operation(ReadOperationRequest {
                     repo_id,
@@ -319,12 +317,12 @@ impl OpStore for CommitCloudOpStore {
     }
 
     async fn write_operation(&self, contents: &Operation) -> OpStoreResult<OperationId> {
-        let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let config = self.config.clone();
+        let repo_id = self.config.repo_id.clone();
         let proto_op = operation_to_proto(contents);
 
         run_async(move || async move {
-            let mut client = OpStoreServiceClient::connect(server_url).await?;
+            let mut client = connect_op_store_client(&config).await?;
             let response = client
                 .write_operation(WriteOperationRequest {
                     repo_id,

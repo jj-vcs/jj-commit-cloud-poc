@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cc_common::workspace::workspace_service_client::WorkspaceServiceClient;
 use cc_common::workspace::{UpdateWorkspaceRequest, WorkspaceState};
 use jj_lib::commit::Commit;
 use jj_lib::local_working_copy::LocalWorkingCopyFactory;
@@ -18,6 +17,7 @@ use jj_lib::working_copy::{
     SnapshotStats, WorkingCopy, WorkingCopyFactory, WorkingCopyStateError,
 };
 
+use crate::client::connect_workspace_client;
 use crate::util::{run_async, CommitCloudConfig};
 
 pub struct CommitCloudWorkingCopy {
@@ -172,11 +172,11 @@ impl LockedWorkingCopy for LockedCommitCloudWorkingCopy {
             .unwrap_or_default();
 
         // Sync workspace state to jj-cc-server
-        let server_url = config.server_url.clone();
+        let config_clone = config.clone();
         let repo_id = config.repo_id.clone();
         let user_clone = user.clone();
         let _ = run_async(move || async move {
-            let mut client = WorkspaceServiceClient::connect(server_url).await?;
+            let mut client = connect_workspace_client(&config_clone).await?;
             let _ = client
                 .update_workspace(UpdateWorkspaceRequest {
                     workspace: Some(WorkspaceState {
@@ -258,11 +258,11 @@ impl WorkingCopyFactory for CommitCloudWorkingCopyFactory {
             .unwrap_or_default();
         let commit_id_bytes = std::fs::read(state_path.join("commit_id")).ok().unwrap_or_default();
 
-        let server_url = config.server_url.clone();
+        let config_clone = config.clone();
         let repo_id = config.repo_id.clone();
         let user_clone = user.clone();
         let _ = run_async(move || async move {
-            let mut client = WorkspaceServiceClient::connect(server_url).await?;
+            let mut client = connect_workspace_client(&config_clone).await?;
             let _ = client
                 .update_workspace(UpdateWorkspaceRequest {
                     workspace: Some(WorkspaceState {

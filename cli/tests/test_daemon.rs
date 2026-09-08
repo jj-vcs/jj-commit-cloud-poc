@@ -197,3 +197,69 @@ async fn test_daemon_routes_rpc_calls_over_uds() {
         .into_inner();
     assert!(del_ws_resp.success);
 }
+
+#[tokio::test]
+async fn test_daemon_auto_spawn_on_cli_command() {
+    let server = spawn_server().await;
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("auto_spawn.sock");
+    assert!(!socket_path.exists());
+
+    let mut init_cmd = assert_cmd::Command::cargo_bin("jj").unwrap();
+    init_cmd
+        .current_dir(temp_dir.path())
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args([
+            "cc",
+            "init",
+            "--create-repo",
+            "--server",
+            server.url(),
+            ".",
+        ]);
+    init_cmd.assert().success();
+
+    // Set custom socket in config.toml to test auto-spawning to that specific path
+    let config_path = temp_dir.path().join(".jj/repo/store/config.toml");
+    let config_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: toml::Value = toml::from_str(&config_str).unwrap();
+    config.as_table_mut().unwrap().insert(
+        "daemon_socket".to_string(),
+        toml::Value::String(socket_path.to_str().unwrap().to_string()),
+    );
+    fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    // Verify socket does not exist yet before any commands run
+    assert!(!socket_path.exists());
+
+    // Run describe command - should auto-spawn the daemon at the specified socket
+    let test_file = temp_dir.path().join("test.txt");
+    fs::write(&test_file, "auto spawned daemon test").unwrap();
+
+    let mut describe_cmd = assert_cmd::Command::cargo_bin("jj").unwrap();
+    describe_cmd
+        .current_dir(temp_dir.path())
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args(["describe", "-m", "auto spawn commit"])
+        .assert()
+        .success();
+
+    // Verify socket was created and is active
+    assert!(socket_path.exists(), "Daemon socket should have been auto-spawned");
+
+    // Run log command to verify it communicates through the auto-spawned daemon
+    let mut log_cmd = assert_cmd::Command::cargo_bin("jj").unwrap();
+    let output = log_cmd
+        .current_dir(temp_dir.path())
+        .env("JJ_USER", "Test User")
+        .env("JJ_EMAIL", "test.user@example.com")
+        .args(["log"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("auto spawn commit"));
+}

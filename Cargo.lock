@@ -411,11 +411,13 @@ dependencies = [
  "cc-common",
  "futures 0.3.32",
  "gix 0.68.0",
+ "hyper-util",
  "jj-lib",
  "serde",
  "tokio",
  "toml 0.8.23",
  "tonic",
+ "tower 0.4.13",
  "uuid",
 ]
 
