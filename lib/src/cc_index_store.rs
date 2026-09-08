@@ -8,34 +8,26 @@ use jj_lib::index::{IndexStore, IndexStoreError, IndexStoreResult, MutableIndex,
 use jj_lib::operation::Operation;
 use jj_lib::store::Store;
 
+use crate::client::connect_backend_client;
 use crate::util::{run_async, CommitCloudConfig};
 
 #[derive(Debug)]
 pub struct CommitCloudIndexStore {
     inner: DefaultIndexStore,
-    server_url: String,
-    project_id: String,
+    config: CommitCloudConfig,
 }
 
 impl CommitCloudIndexStore {
     pub fn init(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let inner = DefaultIndexStore::init(store_path)?;
         let config = CommitCloudConfig::load_from_store(store_path)?;
-        Ok(Self {
-            inner,
-            server_url: config.server_url,
-            project_id: config.project_id,
-        })
+        Ok(Self { inner, config })
     }
 
     pub fn load(store_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let inner = DefaultIndexStore::load(store_path);
         let config = CommitCloudConfig::load_from_store(store_path)?;
-        Ok(Self {
-            inner,
-            server_url: config.server_url,
-            project_id: config.project_id,
-        })
+        Ok(Self { inner, config })
     }
 }
 
@@ -52,14 +44,10 @@ impl IndexStore for CommitCloudIndexStore {
     ) -> IndexStoreResult<Box<dyn ReadonlyIndex>> {
         let index = self.inner.get_index_at_op(op, store).await?;
 
-        let server_url = self.server_url.clone();
-        let project_id = self.project_id.clone();
+        let config = self.config.clone();
+        let project_id = self.config.project_id.clone();
         let project_commit_ids: Vec<CommitId> = run_async(move || async move {
-            let mut client =
-                cc_common::backend::backend_service_client::BackendServiceClient::connect(
-                    server_url,
-                )
-                .await?;
+            let mut client = connect_backend_client(&config).await?;
             let res = client
                 .list_project_commits(tonic::Request::new(
                     cc_common::backend::ListProjectCommitsRequest { project_id },

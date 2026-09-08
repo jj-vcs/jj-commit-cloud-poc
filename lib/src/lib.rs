@@ -3,6 +3,7 @@ pub mod cc_index_store;
 pub mod cc_op_heads_store;
 pub mod cc_op_store;
 pub mod cc_working_copy;
+pub mod client;
 pub mod git_importer;
 pub mod repo;
 pub mod util;

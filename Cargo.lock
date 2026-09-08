@@ -485,11 +485,13 @@ dependencies = [
  "cc-common",
  "futures 0.3.32",
  "gix 0.68.0",
+ "hyper-util",
  "jj-lib",
  "serde",
  "tokio",
  "toml 0.8.23",
  "tonic 0.12.3",
+ "tower 0.4.13",
  "uuid",
 ]
 
@@ -618,6 +620,7 @@ dependencies = [
  "cc-common",
  "cc-lib",
  "clap",
+ "hyper-util",
  "jj-cli",
  "jj-lib",
  "predicates",
@@ -628,6 +631,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tonic 0.12.3",
+ "tower 0.4.13",
  "uuid",
 ]
 
@@ -3814,6 +3818,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jj-commit-cloud-daemon"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cc-common",
+ "clap",
+ "hyper-util",
+ "tokio",
+ "tokio-stream",
+ "tonic 0.12.3",
+ "tower 0.4.13",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "jj-commit-cloud-server"
 version = "0.1.0"
 dependencies = [
@@ -6587,6 +6607,7 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
