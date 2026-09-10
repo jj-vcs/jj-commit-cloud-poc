@@ -3,9 +3,11 @@ use cc_common::backend::*;
 use cc_common::op_store::*;
 
 pub mod memorystore;
+pub mod spannerstore;
 pub mod sqlitestore;
 
 pub use memorystore::{CommitId, FileId, MemoryStore, OpId, RepoId, TreeId, ViewId};
+pub use spannerstore::SpannerStore;
 pub use sqlitestore::SqliteStore;
 
 // Error returned by fallible store operations.

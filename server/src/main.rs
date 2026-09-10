@@ -26,6 +26,7 @@ use workspace::CommitCloudWorkspaceService;
 enum StoreType {
     Memory,
     Sqlite,
+    Spanner,
 }
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,10 @@ struct Args {
     /// Path to SQLite database file (defaults to ~/.jj-cc-server/commit_cloud.db)
     #[arg(long)]
     sqlite_path: Option<std::path::PathBuf>,
+
+    /// Spanner database resource path (e.g. projects/<project>/instances/<instance>/databases/<db>)
+    #[arg(long, env = "SPANNER_DATABASE")]
+    spanner_db: Option<String>,
 }
 
 pub struct CommitCloudServerImpl {
@@ -87,6 +92,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let path = args.sqlite_path.unwrap_or_else(get_default_sqlite_path);
             info!("Opening SQLite Database Store at '{}'", path.display());
             Arc::new(store::SqliteStore::open(path)?)
+        }
+        StoreType::Spanner => {
+            let spanner_db = args.spanner_db.ok_or_else(|| {
+                "--spanner-db (or SPANNER_DATABASE environment variable) must be specified when using the spanner store type"
+            })?;
+            info!("Connecting to Cloud Spanner at '{spanner_db}'");
+            Arc::new(store::SpannerStore::connect(&spanner_db).await?)
         }
     };
 

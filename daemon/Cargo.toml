@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "signal", "process", "time", "sync", "io-util"] }
 clap = { version = "4", features = ["derive"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls", "tls-webpki-roots"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
