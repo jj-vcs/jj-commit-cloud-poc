@@ -3334,7 +3334,7 @@ dependencies = [
  "percent-encoding",
  "pest",
  "pest_derive",
- "pollster",
+ "pollster 0.4.0",
  "rand 0.10.2",
  "rand_chacha 0.10.0",
  "ratatui",
@@ -3373,8 +3373,10 @@ dependencies = [
  "gix 0.68.0",
  "hex",
  "jj-lib",
+ "pollster 0.3.0",
  "predicates",
  "prost 0.13.5",
+ "rand 0.8.6",
  "rusqlite",
  "tempfile",
  "testutils",
@@ -3415,7 +3417,7 @@ dependencies = [
  "once_cell",
  "pest",
  "pest_derive",
- "pollster",
+ "pollster 0.4.0",
  "prost 0.14.4",
  "rand 0.10.2",
  "rand_chacha 0.10.0",
@@ -4091,6 +4093,12 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "pollster"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
 
 [[package]]
 name = "pollster"
