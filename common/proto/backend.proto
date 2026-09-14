@@ -1,5 +1,8 @@
 syntax = "proto3";
 
+// TODO: Add strong types for main entities across the protos (e.g., `message RepoId { string id = 1; }`)
+// instead of raw bytes/strings.
+
 package commit_cloud.backend;
 
 // Service interface for reading and writing Jujutsu backend objects over gRPC
