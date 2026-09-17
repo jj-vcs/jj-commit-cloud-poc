@@ -7,12 +7,16 @@ package commit_cloud.backend;
 
 // Service interface for reading and writing Jujutsu backend objects over gRPC
 service BackendService {
-  // Register a new repository on the remote backend
+  // Register a new project namespace for shared commits/trees/files on the remote backend
+  rpc RegisterProject (RegisterProjectRequest) returns (RegisterProjectResponse);
+
+  // Register a new repository (private op log) inside a project on the remote backend
   rpc RegisterRepository (RegisterRepositoryRequest) returns (RegisterRepositoryResponse);
 
   // Commit object RPCs
   rpc ReadCommit (ReadCommitRequest) returns (ReadCommitResponse);
   rpc WriteCommit (WriteCommitRequest) returns (WriteCommitResponse);
+  rpc ListProjectCommits (ListProjectCommitsRequest) returns (ListProjectCommitsResponse);
 
   // Directory tree RPCs
   rpc ReadTree (ReadTreeRequest) returns (ReadTreeResponse);
@@ -29,14 +33,27 @@ service BackendService {
   rpc WriteSymlink (WriteSymlinkRequest) returns (WriteSymlinkResponse);
 }
 
-// Repository registration messages for initializing a remote repo
+// Project registration messages for creating/ensuring a shared project CAS namespace
+message RegisterProjectRequest {
+  optional string project_id = 1;
+  optional string name = 2;
+}
+
+message RegisterProjectResponse {
+  string project_id = 1;
+}
+
+// Repository registration messages for initializing a remote repo within a project
 // Used when running `jj cc init` to register a new local repository with the backend server
 message RegisterRepositoryRequest {
-  optional string name = 1;
+  string project_id = 1;
+  optional string repo_id = 2;
+  optional string name = 3;
 }
 
 message RegisterRepositoryResponse {
   string repo_id = 1;
+  string project_id = 2;
 }
 
 // Messages for representing commit metadata and handling commit read/write RPCs
@@ -67,7 +84,7 @@ message Commit {
 }
 
 message ReadCommitRequest {
-  string repo_id = 1;
+  string project_id = 1;
   bytes commit_id = 2;
 }
 
@@ -76,12 +93,20 @@ message ReadCommitResponse {
 }
 
 message WriteCommitRequest {
-  string repo_id = 1;
+  string project_id = 1;
   Commit commit = 2;
 }
 
 message WriteCommitResponse {
   bytes commit_id = 1;
+}
+
+message ListProjectCommitsRequest {
+  string project_id = 1;
+}
+
+message ListProjectCommitsResponse {
+  repeated bytes commit_ids = 1;
 }
 
 // Messages for representing directory trees and handling tree read/write RPCs
@@ -107,7 +132,7 @@ message TreeEntry {
 }
 
 message ReadTreeRequest {
-  string repo_id = 1;
+  string project_id = 1;
   bytes tree_id = 2;
   string path = 3;
 }
@@ -118,7 +143,7 @@ message ReadTreeResponse {
 }
 
 message WriteTreeRequest {
-  string repo_id = 1;
+  string project_id = 1;
   string path = 2;
   repeated TreeEntry entries = 3;
 }
@@ -130,7 +155,7 @@ message WriteTreeResponse {
 // Messages for reading and writing file contents/blobs
 // Used during working copy snapshotting to store and retrieve file contents
 message ReadFileRequest {
-  string repo_id = 1;
+  string project_id = 1;
   bytes file_id = 2;
 }
 
@@ -139,7 +164,7 @@ message ReadFileResponse {
 }
 
 message WriteFileRequest {
-  string repo_id = 1;
+  string project_id = 1;
   bytes content = 2;
 }
 
@@ -150,7 +175,7 @@ message WriteFileResponse {
 // Messages for reading and writing symlinks
 // Used to read/write symlinks, mirrors the commit protos
 message ReadSymlinkRequest {
-  string repo_id = 1;
+  string project_id = 1;
   bytes symlink_id = 2;
 }
 
@@ -159,7 +184,7 @@ message ReadSymlinkResponse {
 }
 
 message WriteSymlinkRequest {
-  string repo_id = 1;
+  string project_id = 1;
   string target = 2;
 }
 

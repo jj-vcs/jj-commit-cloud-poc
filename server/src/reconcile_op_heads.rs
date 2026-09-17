@@ -34,6 +34,15 @@ pub async fn reconcile_repo_op_heads(
     const BASE_BACKOFF_MS: u64 = 25;
     const MAX_JITTER_MS: u64 = 15;
 
+    let project_id = store
+        .get_repo_project_id(repo_id)
+        .await?
+        .ok_or_else(|| {
+            tonic::Status::not_found(format!(
+                "repository should have been registered before reconciling op heads: {repo_id}"
+            ))
+        })?;
+
     for attempt in 0..MAX_RETRIES {
         let heads = store
             .get_op_heads(repo_id)
@@ -49,6 +58,7 @@ pub async fn reconcile_repo_op_heads(
         }
 
         let store_clone = store.clone();
+        let project_id_owned = project_id.clone();
         let repo_id_owned = repo_id.to_string();
 
         // Use `spawn_blocking` and `pollster::block_on` here. This is unavoidable because jj-lib's `load_at_head()`
@@ -63,7 +73,7 @@ pub async fn reconcile_repo_op_heads(
                 let submodule_store = Arc::new(ServerSubmoduleStore);
 
                 let server_backend =
-                    Box::new(ServerBackend::new(store_clone.clone(), repo_id_owned.clone()));
+                    Box::new(ServerBackend::new(store_clone.clone(), project_id_owned));
                 let jj_store =
                     JjStore::new(server_backend, signer, merge_options.clone());
                 let op_store: Arc<dyn OpStore> =

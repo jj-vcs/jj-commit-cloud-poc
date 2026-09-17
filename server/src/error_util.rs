@@ -17,6 +17,19 @@ impl From<StoreError> for tonic::Status {
     }
 }
 
+pub async fn ensure_project_registered_error(
+    store: &dyn Store,
+    project_id: &str,
+    action: &str,
+) -> Result<(), tonic::Status> {
+    if !store.is_project_registered(project_id).await? {
+        return Err(tonic::Status::not_found(format!(
+            "project should have been registered before {action}: {project_id}"
+        )));
+    }
+    Ok(())
+}
+
 pub async fn ensure_repo_registered_error(
     store: &dyn Store,
     repo_id: &str,

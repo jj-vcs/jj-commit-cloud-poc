@@ -40,7 +40,7 @@ use cc_common::conversions::op_store::{
 
 pub struct ServerBackend {
     store: Arc<dyn Store>,
-    repo_id: String,
+    project_id: String,
     root_commit_id: CommitId,
     root_change_id: ChangeId,
     empty_tree_id: TreeId,
@@ -49,19 +49,19 @@ pub struct ServerBackend {
 impl Debug for ServerBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServerBackend")
-            .field("repo_id", &self.repo_id)
+            .field("project_id", &self.project_id)
             .finish()
     }
 }
 
 impl ServerBackend {
-    pub fn new(store: Arc<dyn Store>, repo_id: String) -> Self {
+    pub fn new(store: Arc<dyn Store>, project_id: String) -> Self {
         let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
         let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
         Self {
             store,
-            repo_id,
+            project_id,
             root_commit_id,
             root_change_id,
             empty_tree_id,
@@ -108,7 +108,7 @@ impl Backend for ServerBackend {
         let file_id_bytes = id.to_bytes().to_vec();
         let content = self
             .store
-            .get_file(&self.repo_id, &file_id_bytes)
+            .get_file(&self.project_id, &file_id_bytes)
             .await
             .map_err(|e| BackendError::Other(e.into()))?
             .ok_or_else(|| BackendError::ObjectNotFound {
@@ -130,7 +130,7 @@ impl Backend for ServerBackend {
             .map_err(|e| BackendError::Other(e.into()))?;
         let file_id_bytes = compute_git_blob_hash(&buffer);
         self.store
-            .put_file(self.repo_id.clone(), file_id_bytes.clone(), buffer)
+            .put_file(self.project_id.clone(), file_id_bytes.clone(), buffer)
             .await
             .map_err(|e| BackendError::Other(e.into()))?;
         Ok(FileId::from_bytes(&file_id_bytes))
@@ -163,7 +163,7 @@ impl Backend for ServerBackend {
 
         let proto_entries = self
             .store
-            .get_tree(&self.repo_id, id.as_bytes())
+            .get_tree(&self.project_id, id.as_bytes())
             .await
             .map_err(|e| BackendError::Other(e.into()))?
             .ok_or_else(|| BackendError::ObjectNotFound {
@@ -193,7 +193,7 @@ impl Backend for ServerBackend {
         let tree_id_bytes = compute_git_tree_hash(&proto_entries);
 
         self.store
-            .put_tree(self.repo_id.clone(), tree_id_bytes.clone(), proto_entries)
+            .put_tree(self.project_id.clone(), tree_id_bytes.clone(), proto_entries)
             .await
             .map_err(|e| BackendError::Other(e.into()))?;
 
@@ -210,7 +210,7 @@ impl Backend for ServerBackend {
 
         let proto_commit = self
             .store
-            .get_commit(&self.repo_id, id.as_bytes())
+            .get_commit(&self.project_id, id.as_bytes())
             .await
             .map_err(|e| BackendError::Other(e.into()))?
             .ok_or_else(|| BackendError::ObjectNotFound {
@@ -231,7 +231,7 @@ impl Backend for ServerBackend {
         let commit_id_bytes = compute_git_commit_hash(&proto_commit);
         self.store
             .put_commit(
-                self.repo_id.clone(),
+                self.project_id.clone(),
                 commit_id_bytes.clone(),
                 proto_commit,
             )
