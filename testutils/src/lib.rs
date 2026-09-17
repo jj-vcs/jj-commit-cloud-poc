@@ -122,6 +122,8 @@ impl TestWorkspace {
                 "init",
                 "--server",
                 server.url(),
+                "--project-id",
+                "test-project",
                 "--create",
                 ".",
             ]);
@@ -153,6 +155,8 @@ impl TestWorkspace {
                 "init",
                 "--server",
                 server.url(),
+                "--project-id",
+                "test-project",
                 "--create",
                 ".",
             ]);

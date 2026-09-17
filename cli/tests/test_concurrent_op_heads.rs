@@ -19,6 +19,8 @@ async fn register_test_repo(server_url: &str) -> String {
         .expect("Failed to connect backend client");
     let response = backend_client
         .register_repository(tonic::Request::new(RegisterRepositoryRequest {
+            project_id: "test-project".to_string(),
+            repo_id: None,
             name: None,
         }))
         .await

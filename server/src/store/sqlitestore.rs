@@ -720,16 +720,16 @@ mod tests {
         let repo_id = "test-repo".to_string();
 
         assert_eq!(store.is_repo_registered(&repo_id).await.unwrap(), false);
-        store.register_repo(repo_id.clone(), Some("my-repo".to_string())).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), Some("my-repo".to_string())).await.unwrap();
         assert_eq!(store.is_repo_registered(&repo_id).await.unwrap(), true);
-        assert!(store.register_repo(repo_id.clone(), None).await.is_ok());
+        assert!(store.register_repo(repo_id.clone(), "default".to_string(), None).await.is_ok());
     }
 
     #[tokio::test]
     async fn test_sqlite_put_and_read_file_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let file_id = vec![1, 2, 3, 4];
         let content = b"hello file content".to_vec();
@@ -744,7 +744,7 @@ mod tests {
     async fn test_sqlite_put_and_read_commit_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let commit = sample_commit();
         let commit_id = commit.commit_id.clone();
@@ -759,7 +759,7 @@ mod tests {
     async fn test_sqlite_put_and_read_tree_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let tree_entries = sample_tree_entries();
         let tree_id = vec![10, 20, 30];
@@ -774,7 +774,7 @@ mod tests {
     async fn test_sqlite_put_and_read_operation_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let op = sample_operation();
         let op_id = vec![40, 50, 60];
@@ -789,7 +789,7 @@ mod tests {
     async fn test_sqlite_put_and_read_view_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let view = sample_view();
         let view_id = vec![70, 80, 90];
@@ -804,7 +804,7 @@ mod tests {
     async fn test_sqlite_put_and_read_op_heads_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         assert_eq!(store.get_op_heads(&repo_id).await.unwrap(), None);
         let head1 = vec![101];
@@ -822,7 +822,7 @@ mod tests {
     async fn test_sqlite_compare_and_swap_op_heads_succeeds() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo-exact".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let head1 = vec![201];
         let head2 = vec![202];
@@ -842,7 +842,7 @@ mod tests {
     async fn test_sqlite_compare_and_swap_op_heads_fails_on_mismatch() {
         let store = SqliteStore::in_memory().unwrap();
         let repo_id = "test-repo-exact-mismatch".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let head1 = vec![201];
         let head2 = vec![202];
@@ -880,7 +880,7 @@ mod tests {
         let store = SqliteStore::open(&file_path).unwrap();
 
         let repo_id = "test-reconnect-repo".to_string();
-        store.register_repo(repo_id.clone(), None).await.unwrap();
+        store.register_repo(repo_id.clone(), "default".to_string(), None).await.unwrap();
 
         let file_id = vec![10, 20, 30];
         let content = b"persisted content".to_vec();
@@ -898,7 +898,7 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_register_repo_fails_on_readonly_store() {
         let (_dir, store) = create_readonly_store();
-        let err = store.register_repo("repo1".to_string(), None).await.unwrap_err();
+        let err = store.register_repo("repo1".to_string(), "default".to_string(), None).await.unwrap_err();
         match &err {
             StoreError::Write(msg) => {
                 assert_eq!(msg, "attempt to write a readonly database");
@@ -1104,7 +1104,7 @@ mod tests {
     async fn test_sqlite_get_commit_fails_on_corrupted_data() {
         let store = SqliteStore::in_memory().unwrap();
         store.conn.lock().unwrap().execute(
-            "INSERT INTO commits (repo_id, commit_id, data) VALUES (?1, ?2, ?3)",
+            "INSERT INTO commits (project_id, commit_id, data) VALUES (?1, ?2, ?3)",
             params!["r1", vec![1u8], vec![0xFFu8, 0xFFu8, 0xFFu8, 0xFFu8]],
         ).unwrap();
         let err = store.get_commit("r1", &[1]).await.unwrap_err();
@@ -1121,7 +1121,7 @@ mod tests {
     async fn test_sqlite_get_tree_fails_on_corrupted_data() {
         let store = SqliteStore::in_memory().unwrap();
         store.conn.lock().unwrap().execute(
-            "INSERT INTO trees (repo_id, tree_id, data) VALUES (?1, ?2, ?3)",
+            "INSERT INTO trees (project_id, tree_id, data) VALUES (?1, ?2, ?3)",
             params!["r1", vec![1u8], vec![0xFFu8, 0xFFu8, 0xFFu8, 0xFFu8]],
         ).unwrap();
         let err = store.get_tree("r1", &[1]).await.unwrap_err();

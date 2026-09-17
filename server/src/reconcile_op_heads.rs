@@ -177,7 +177,7 @@ mod tests {
     async fn test_reconcile_repo_op_heads_single_head_is_noop() {
         let store = Arc::new(MemoryStore::new());
         let repo_id = "test-single-head-repo";
-        store.register_repo(repo_id.to_string(), None).await.unwrap();
+        store.register_repo(repo_id.to_string(), "default".to_string(), None).await.unwrap();
 
         let root_op_bytes = cc_common::ROOT_OPERATION_ID_BYTES.to_vec();
         let result = reconcile_repo_op_heads(store.clone(), repo_id)
@@ -193,8 +193,8 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let repo_id_jj = "repo-jj-direct";
         let repo_id_server = "repo-server-reconcile";
-        store.register_repo(repo_id_jj.to_string(), None).await.unwrap();
-        store.register_repo(repo_id_server.to_string(), None).await.unwrap();
+        store.register_repo(repo_id_jj.to_string(), "default".to_string(), None).await.unwrap();
+        store.register_repo(repo_id_server.to_string(), "default".to_string(), None).await.unwrap();
 
         let root_op_bytes = cc_common::ROOT_OPERATION_ID_BYTES.to_vec();
 
@@ -302,7 +302,7 @@ mod tests {
         let signer = Signer::from_settings(&user_settings).unwrap();
         let merge_options = MergeOptions::from_settings(&user_settings).unwrap();
 
-        let jj_backend = Box::new(ServerBackend::new(store.clone(), repo_id_jj.to_string()));
+        let jj_backend = Box::new(ServerBackend::new(store.clone(), "default".to_string()));
         let jj_store = JjStore::new(jj_backend, signer, merge_options);
         let jj_op_store: Arc<dyn OpStore> = Arc::new(ServerOpStore::new(store.clone(), repo_id_jj.to_string()));
         let jj_op_heads_store: Arc<dyn OpHeadsStore> = Arc::new(ServerOpHeadsStore::new(store.clone(), repo_id_jj.to_string()));
@@ -382,7 +382,7 @@ mod tests {
     async fn test_reconcile_repo_op_heads_fails_after_exhausting_retries_on_missing_operation() {
         let store = Arc::new(MemoryStore::new());
         let repo_id = "test-reconcile-failure-repo";
-        store.register_repo(repo_id.to_string(), None).await.unwrap();
+        store.register_repo(repo_id.to_string(), "default".to_string(), None).await.unwrap();
 
         let root_op_bytes = cc_common::ROOT_OPERATION_ID_BYTES.to_vec();
         let root_view_bytes = cc_common::ROOT_VIEW_ID_BYTES.to_vec();

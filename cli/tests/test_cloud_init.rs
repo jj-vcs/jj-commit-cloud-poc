@@ -14,6 +14,10 @@ async fn test_cc_init_creates_local_workspace() {
         .expect("The store type file should be readable");
     assert_eq!(store_type, "commit_cloud");
 
+    let index_type = fs::read_to_string(repo_path.join(".jj/repo/index/type"))
+        .expect("The index type file should be readable");
+    assert_eq!(index_type, "commit_cloud");
+
     // Verify local Commit Cloud configuration TOML
     let config_content = fs::read_to_string(jj_store_path.join("config.toml"))
         .expect("The config.toml file should be readable");
@@ -34,6 +38,11 @@ async fn test_cc_init_creates_local_workspace() {
     // Validate the repo_id string is a valid UUID
     uuid::Uuid::parse_str(repo_id_str)
         .expect("The repo_id should be a valid UUID string");
+
+    let project_id_str = parsed_config.get("project_id")
+        .and_then(|v| v.as_str())
+        .expect("The project_id field should exist and be a string");
+    assert_eq!(project_id_str, "test-project");
 }
 
 #[tokio::test]
@@ -46,17 +55,17 @@ async fn test_cc_init_registers_repository() {
         .expect("The config.toml file should be readable");
     let parsed_config: toml::Value = toml::from_str(&config_content)
         .expect("The config.toml file should be valid TOML");
-    let repo_id_str = parsed_config.get("repo_id")
+    let project_id_str = parsed_config.get("project_id")
         .and_then(|v| v.as_str())
-        .expect("The repo_id field should exist and be a string");
+        .expect("The project_id field should exist and be a string");
 
-    // Verify that the repository was actually registered in the cloud server over gRPC
+    // Verify that the project/repository was actually registered in the cloud server over gRPC
     let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(workspace.server_url().to_string())
         .await
         .expect("gRPC connection to test server should have succeeded");
 
     let request = tonic::Request::new(cc_common::backend::ReadCommitRequest {
-        repo_id: repo_id_str.to_string(),
+        project_id: project_id_str.to_string(),
         commit_id: vec![1u8; cc_common::COMMIT_ID_LENGTH], // Dummy commit ID
     });
 
@@ -64,7 +73,7 @@ async fn test_cc_init_registers_repository() {
     assert_eq!(
         err.message(),
         "commit should have been present in cloud database",
-        "Repository was not registered in the cloud server!"
+        "Project was not registered in the cloud server!"
     );
 }
 
@@ -78,8 +87,27 @@ async fn test_cc_init_fails_on_invalid_server_addr() {
         "init",
         "--server",
         "http://invalid-server-domain-does-not-exist:9999",
+        "--project-id",
+        "test-project",
         "--create",
         "/invalid_path_dest_dir",
+    ]);
+
+    cmd.assert().failure();
+}
+
+#[tokio::test]
+async fn test_cc_init_fails_without_project_id() {
+    let mut cmd = assert_cmd::Command::cargo_bin("jj")
+        .expect("The jj CLI binary should have compiled");
+
+    cmd.args([
+        "cc",
+        "init",
+        "--server",
+        "http://localhost:8080",
+        "--create",
+        ".",
     ]);
 
     cmd.assert().failure();
