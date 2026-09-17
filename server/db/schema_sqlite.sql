@@ -1,21 +1,30 @@
 -- SQLite Schema for Commit Cloud Server
 
+-- Contains commits across all repositories registered to this project.
+CREATE TABLE IF NOT EXISTS projects (
+    project_id TEXT PRIMARY KEY,
+    name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Repository registration table for tracking active Commit Cloud repos
 -- Used when running `jj cc init` to register a new remote repository
 CREATE TABLE IF NOT EXISTS repos (
     repo_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
     name TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
 );
 
 -- Commit objects store for serialized commit metadata and history nodes
 -- Used when reading and writing commits during change history operations
 CREATE TABLE IF NOT EXISTS commits (
-    repo_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
     commit_id BLOB NOT NULL,
     data BLOB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (repo_id, commit_id)
+    PRIMARY KEY (project_id, commit_id)
 );
 
 -- Operation objects store for Jujutsu's operation log graph entries
@@ -40,31 +49,31 @@ CREATE TABLE IF NOT EXISTS op_heads (
 -- Directory tree objects store for serialized directory trees and entry lists
 -- Used during snapshotting and tree walking to resolve directory hierarchies
 CREATE TABLE IF NOT EXISTS trees (
-    repo_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
     tree_id BLOB NOT NULL,
     data BLOB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (repo_id, tree_id)
+    PRIMARY KEY (project_id, tree_id)
 );
 
 -- File content / blob store for binary and text file contents
 -- Used when reading and writing file contents for working copy snapshots and VFS reads
 CREATE TABLE IF NOT EXISTS files (
-    repo_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
     file_id BLOB NOT NULL,
     data BLOB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (repo_id, file_id)
+    PRIMARY KEY (project_id, file_id)
 );
 
 -- Symlink target metadata store for symbolic links in the repository tree
 -- Used when reading and writing symlink entries in project directory trees
 CREATE TABLE IF NOT EXISTS symlinks (
-    repo_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
     symlink_id BLOB NOT NULL,
     target TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (repo_id, symlink_id)
+    PRIMARY KEY (project_id, symlink_id)
 );
 
 -- View objects store for repository views (bookmarks, working copy commit IDs, remote refs)

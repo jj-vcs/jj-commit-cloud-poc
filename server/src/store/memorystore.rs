@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use super::{Store, StoreError, StoreResult};
 
+pub type ProjectId = String;
 pub type RepoId = String;
 pub type CommitId = Vec<u8>;
 pub type TreeId = Vec<u8>;
@@ -15,10 +16,11 @@ pub type ViewId = Vec<u8>;
 
 #[derive(Debug, Default)]
 pub struct MemoryStore {
-    pub repos: Mutex<HashSet<RepoId>>,
-    pub commits: Mutex<HashMap<RepoId, HashMap<CommitId, Commit>>>,
-    pub trees: Mutex<HashMap<RepoId, HashMap<TreeId, Vec<TreeEntry>>>>,
-    pub files: Mutex<HashMap<RepoId, HashMap<FileId, Vec<u8>>>>,
+    pub projects: Mutex<HashSet<ProjectId>>,
+    pub repos: Mutex<HashMap<RepoId, ProjectId>>,
+    pub commits: Mutex<HashMap<ProjectId, HashMap<CommitId, Commit>>>,
+    pub trees: Mutex<HashMap<ProjectId, HashMap<TreeId, Vec<TreeEntry>>>>,
+    pub files: Mutex<HashMap<ProjectId, HashMap<FileId, Vec<u8>>>>,
     pub ops: Mutex<HashMap<RepoId, HashMap<OpId, Operation>>>,
     pub views: Mutex<HashMap<RepoId, HashMap<ViewId, View>>>,
     pub op_heads: Mutex<HashMap<RepoId, Vec<OpId>>>,
@@ -32,60 +34,87 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn is_repo_registered(&self, repo_id: &str) -> StoreResult<bool> {
-        Ok(self.repos.lock().unwrap().contains(repo_id))
+    async fn is_project_registered(&self, project_id: &str) -> StoreResult<bool> {
+        Ok(self.projects.lock().unwrap().contains(project_id))
     }
 
-    async fn register_repo(&self, repo_id: String, _name: Option<String>) -> StoreResult<()> {
-        self.repos.lock().unwrap().insert(repo_id);
+    async fn register_project(&self, project_id: String, _name: Option<String>) -> StoreResult<()> {
+        self.projects.lock().unwrap().insert(project_id);
         Ok(())
     }
 
-    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
+    async fn is_repo_registered(&self, repo_id: &str) -> StoreResult<bool> {
+        Ok(self.repos.lock().unwrap().contains_key(repo_id))
+    }
+
+    async fn register_repo(
+        &self,
+        repo_id: String,
+        project_id: String,
+        _name: Option<String>,
+    ) -> StoreResult<()> {
+        self.projects.lock().unwrap().insert(project_id.clone());
+        self.repos.lock().unwrap().insert(repo_id, project_id);
+        Ok(())
+    }
+
+    async fn get_repo_project_id(&self, repo_id: &str) -> StoreResult<Option<String>> {
+        Ok(self.repos.lock().unwrap().get(repo_id).cloned())
+    }
+
+    async fn get_commit(&self, project_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
         let commits = self.commits.lock().unwrap();
-        Ok(commits.get(repo_id).and_then(|m| m.get(commit_id).cloned()))
+        Ok(commits.get(project_id).and_then(|m| m.get(commit_id).cloned()))
+    }
+
+    async fn list_project_commit_ids(&self, project_id: &str) -> StoreResult<Vec<CommitId>> {
+        let commits = self.commits.lock().unwrap();
+        Ok(commits
+            .get(project_id)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default())
     }
 
     async fn put_commit(
         &self,
-        repo_id: String,
+        project_id: String,
         commit_id: Vec<u8>,
         commit: Commit,
     ) -> StoreResult<()> {
         let mut commits = self.commits.lock().unwrap();
-        commits.entry(repo_id).or_default().insert(commit_id, commit);
+        commits.entry(project_id).or_default().insert(commit_id, commit);
         Ok(())
     }
 
-    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
+    async fn get_tree(&self, project_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
         let trees = self.trees.lock().unwrap();
-        Ok(trees.get(repo_id).and_then(|m| m.get(tree_id).cloned()))
+        Ok(trees.get(project_id).and_then(|m| m.get(tree_id).cloned()))
     }
 
     async fn put_tree(
         &self,
-        repo_id: String,
+        project_id: String,
         tree_id: Vec<u8>,
         entries: Vec<TreeEntry>,
     ) -> StoreResult<()> {
         let mut trees = self.trees.lock().unwrap();
-        trees.entry(repo_id).or_default().insert(tree_id, entries);
+        trees.entry(project_id).or_default().insert(tree_id, entries);
         Ok(())
     }
 
-    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
+    async fn get_file(&self, project_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
         let files = self.files.lock().unwrap();
-        Ok(files.get(repo_id).and_then(|m| m.get(file_id).cloned()))
+        Ok(files.get(project_id).and_then(|m| m.get(file_id).cloned()))
     }
 
     async fn put_file(
         &self,
-        repo_id: String,
+        project_id: String,
         file_id: Vec<u8>,
         content: Vec<u8>,
     ) -> StoreResult<()> {
         let mut files = self.files.lock().unwrap();
-        files.entry(repo_id).or_default().insert(file_id, content);
+        files.entry(project_id).or_default().insert(file_id, content);
         Ok(())
     }
 

@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::{Store, StoreError, StoreResult};
+use super::{CommitId, Store, StoreError, StoreResult};
 
 // Path to the SQLite database schema file relative to this source file.
 pub const SQLITE_DATABASE_SCHEMA_PATH: &str = "../../db/schema_sqlite.sql";
@@ -91,6 +91,36 @@ struct TreeEntryList {
 
 #[async_trait]
 impl Store for SqliteStore {
+    async fn is_project_registered(&self, project_id: &str) -> StoreResult<bool> {
+        let conn = self.conn.clone();
+        let project_id = project_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT 1 FROM projects WHERE project_id = ?1")
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            stmt.exists(params![project_id])
+                .map_err(|e| StoreError::Read(e.to_string()))
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn register_project(&self, project_id: String, name: Option<String>) -> StoreResult<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR IGNORE INTO projects (project_id, name) VALUES (?1, ?2)",
+                params![project_id, name],
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
     async fn is_repo_registered(&self, repo_id: &str) -> StoreResult<bool> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
@@ -106,13 +136,23 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn register_repo(&self, repo_id: String, name: Option<String>) -> StoreResult<()> {
+    async fn register_repo(
+        &self,
+        repo_id: String,
+        project_id: String,
+        name: Option<String>,
+    ) -> StoreResult<()> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             conn.execute(
-                "INSERT OR IGNORE INTO repos (repo_id, name) VALUES (?1, ?2)",
-                params![repo_id, name],
+                "INSERT OR IGNORE INTO projects (project_id) VALUES (?1)",
+                params![project_id],
+            )
+            .map_err(|e| StoreError::Write(e.to_string()))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO repos (repo_id, project_id, name) VALUES (?1, ?2, ?3)",
+                params![repo_id, project_id, name],
             )
             .map_err(|e| StoreError::Write(e.to_string()))?;
             Ok(())
@@ -121,17 +161,33 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_commit(&self, repo_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
+    async fn get_repo_project_id(&self, repo_id: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.clone();
         let repo_id = repo_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT project_id FROM repos WHERE repo_id = ?1")
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            stmt.query_row(params![repo_id], |row| row.get(0))
+                .optional()
+                .map_err(|e| StoreError::Read(e.to_string()))
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    async fn get_commit(&self, project_id: &str, commit_id: &[u8]) -> StoreResult<Option<Commit>> {
+        let conn = self.conn.clone();
+        let project_id = project_id.to_string();
         let commit_id = commit_id.to_vec();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
-                .prepare("SELECT data FROM commits WHERE repo_id = ?1 AND commit_id = ?2")
+                .prepare("SELECT data FROM commits WHERE project_id = ?1 AND commit_id = ?2")
                 .map_err(|e| StoreError::Read(e.to_string()))?;
             let data: Option<Vec<u8>> = stmt
-                .query_row(params![repo_id, commit_id], |row| row.get(0))
+                .query_row(params![project_id, commit_id], |row| row.get(0))
                 .optional()
                 .map_err(|e| StoreError::Read(e.to_string()))?;
             match data {
@@ -146,9 +202,30 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
+    async fn list_project_commit_ids(&self, project_id: &str) -> StoreResult<Vec<CommitId>> {
+        let conn = self.conn.clone();
+        let project_id = project_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT commit_id FROM commits WHERE project_id = ?1")
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![project_id], |row| row.get(0))
+                .map_err(|e| StoreError::Read(e.to_string()))?;
+            let mut commit_ids = Vec::new();
+            for row in rows {
+                commit_ids.push(row.map_err(|e| StoreError::Read(e.to_string()))?);
+            }
+            Ok(commit_ids)
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
     async fn put_commit(
         &self,
-        repo_id: String,
+        project_id: String,
         commit_id: Vec<u8>,
         commit: Commit,
     ) -> StoreResult<()> {
@@ -160,8 +237,8 @@ impl Store for SqliteStore {
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             conn.execute(
-                "INSERT OR REPLACE INTO commits (repo_id, commit_id, data) VALUES (?1, ?2, ?3)",
-                params![repo_id, commit_id, buf],
+                "INSERT OR REPLACE INTO commits (project_id, commit_id, data) VALUES (?1, ?2, ?3)",
+                params![project_id, commit_id, buf],
             )
             .map_err(|e| StoreError::Write(e.to_string()))?;
             Ok(())
@@ -170,17 +247,17 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_tree(&self, repo_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
+    async fn get_tree(&self, project_id: &str, tree_id: &[u8]) -> StoreResult<Option<Vec<TreeEntry>>> {
         let conn = self.conn.clone();
-        let repo_id = repo_id.to_string();
+        let project_id = project_id.to_string();
         let tree_id = tree_id.to_vec();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
-                .prepare("SELECT data FROM trees WHERE repo_id = ?1 AND tree_id = ?2")
+                .prepare("SELECT data FROM trees WHERE project_id = ?1 AND tree_id = ?2")
                 .map_err(|e| StoreError::Read(e.to_string()))?;
             let data: Option<Vec<u8>> = stmt
-                .query_row(params![repo_id, tree_id], |row| row.get(0))
+                .query_row(params![project_id, tree_id], |row| row.get(0))
                 .optional()
                 .map_err(|e| StoreError::Read(e.to_string()))?;
             match data {
@@ -198,7 +275,7 @@ impl Store for SqliteStore {
 
     async fn put_tree(
         &self,
-        repo_id: String,
+        project_id: String,
         tree_id: Vec<u8>,
         entries: Vec<TreeEntry>,
     ) -> StoreResult<()> {
@@ -210,8 +287,8 @@ impl Store for SqliteStore {
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             conn.execute(
-                "INSERT OR REPLACE INTO trees (repo_id, tree_id, data) VALUES (?1, ?2, ?3)",
-                params![repo_id, tree_id, buf],
+                "INSERT OR REPLACE INTO trees (project_id, tree_id, data) VALUES (?1, ?2, ?3)",
+                params![project_id, tree_id, buf],
             )
             .map_err(|e| StoreError::Write(e.to_string()))?;
             Ok(())
@@ -220,16 +297,16 @@ impl Store for SqliteStore {
         .map_err(|e| StoreError::Task(e.to_string()))?
     }
 
-    async fn get_file(&self, repo_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
+    async fn get_file(&self, project_id: &str, file_id: &[u8]) -> StoreResult<Option<Vec<u8>>> {
         let conn = self.conn.clone();
-        let repo_id = repo_id.to_string();
+        let project_id = project_id.to_string();
         let file_id = file_id.to_vec();
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             let mut stmt = conn
-                .prepare("SELECT data FROM files WHERE repo_id = ?1 AND file_id = ?2")
+                .prepare("SELECT data FROM files WHERE project_id = ?1 AND file_id = ?2")
                 .map_err(|e| StoreError::Read(e.to_string()))?;
-            stmt.query_row(params![repo_id, file_id], |row| row.get(0))
+            stmt.query_row(params![project_id, file_id], |row| row.get(0))
                 .optional()
                 .map_err(|e| StoreError::Read(e.to_string()))
         })
@@ -239,7 +316,7 @@ impl Store for SqliteStore {
 
     async fn put_file(
         &self,
-        repo_id: String,
+        project_id: String,
         file_id: Vec<u8>,
         content: Vec<u8>,
     ) -> StoreResult<()> {
@@ -247,8 +324,8 @@ impl Store for SqliteStore {
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().unwrap();
             conn.execute(
-                "INSERT OR REPLACE INTO files (repo_id, file_id, data) VALUES (?1, ?2, ?3)",
-                params![repo_id, file_id, content],
+                "INSERT OR REPLACE INTO files (project_id, file_id, data) VALUES (?1, ?2, ?3)",
+                params![project_id, file_id, content],
             )
             .map_err(|e| StoreError::Write(e.to_string()))?;
             Ok(())
