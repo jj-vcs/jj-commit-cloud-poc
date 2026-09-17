@@ -328,6 +328,14 @@ impl Backend for CommitCloudBackend {
         commit: Commit,
         _sign_with: Option<&mut SigningFn>,
     ) -> BackendResult<(CommitId, Commit)> {
+        if commit.parents.contains(&self.root_commit_id) && commit.parents.len() > 1 {
+            return Err(BackendError::Unsupported(
+                "The Commit Cloud backend does not support creating merge commits with the root \
+                 commit as one of the parents."
+                    .to_owned(),
+            ));
+        }
+
         let proto_commit = commit_to_proto(&commit);
         let server_url = self.server_url.clone();
         let project_id = self.project_id.clone();

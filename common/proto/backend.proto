@@ -69,6 +69,11 @@ message Signature {
   Timestamp timestamp = 3;
 }
 
+message SecureSig {
+  bytes data = 1;
+  bytes sig = 2;
+}
+
 // we use repeated bytes for parent commit ids for merge conflits, see upstream lib/src/protos/simple_store.proto
 message Commit {
   bytes commit_id = 1;
@@ -80,7 +85,7 @@ message Commit {
   Signature committer = 7;
   repeated bytes predecessors = 8;
   repeated string conflict_labels = 9;
-  optional bytes secure_sig = 10;
+  optional SecureSig secure_sig = 10;
 }
 
 message ReadCommitRequest {

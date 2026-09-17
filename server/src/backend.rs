@@ -124,6 +124,16 @@ impl BackendService for CommitCloudBackendService {
         let mut commit = req.commit.ok_or_else(|| {
             tonic::Status::invalid_argument("request should have contained commit data")
         })?;
+        if commit.parent_commit_ids.len() > 1
+            && commit
+                .parent_commit_ids
+                .iter()
+                .any(|p| p.as_slice() == cc_common::ROOT_COMMIT_ID_BYTES)
+        {
+            return Err(tonic::Status::invalid_argument(
+                "The Commit Cloud backend does not support creating merge commits with the root commit as one of the parents.",
+            ));
+        }
         let commit_id = if commit.commit_id.is_empty() {
             compute_git_commit_hash(&commit)
         } else {

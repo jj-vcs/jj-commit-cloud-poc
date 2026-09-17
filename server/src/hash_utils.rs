@@ -39,7 +39,37 @@ fn signature_to_git(sig: Option<&cc_common::backend::Signature>) -> gix::actor::
     }
 }
 
-/// Standalone black-box function that computes a Git commit hash using `gix` (Gitoxide).
+const REVERSE_HEX_CHARS: &[u8; 16] = b"zyxwvutsrqponmlk";
+const FORWARD_HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
+fn encode_reverse_hex(data: &[u8]) -> String {
+    let encoded: Vec<u8> = data
+        .iter()
+        .flat_map(|b| {
+            [
+                REVERSE_HEX_CHARS[usize::from(b >> 4)],
+                REVERSE_HEX_CHARS[usize::from(b & 0x0f)],
+            ]
+        })
+        .collect();
+    String::from_utf8(encoded).expect("ASCII z-k digits must be valid UTF-8")
+}
+
+fn encode_forward_hex(data: &[u8]) -> String {
+    let encoded: Vec<u8> = data
+        .iter()
+        .flat_map(|b| {
+            [
+                FORWARD_HEX_CHARS[usize::from(b >> 4)],
+                FORWARD_HEX_CHARS[usize::from(b & 0x0f)],
+            ]
+        })
+        .collect();
+    String::from_utf8(encoded).expect("ASCII hex digits must be valid UTF-8")
+}
+
+/// Standalone black-box function that computes a Git commit hash using `gix` (Gitoxide),
+/// matching `jj_lib::git_backend::GitBackend` commit serialization bit-for-bit.
 pub fn compute_git_commit_hash(commit: &cc_common::backend::Commit) -> Vec<u8> {
     use gix::objs::WriteTo;
 
@@ -58,14 +88,31 @@ pub fn compute_git_commit_hash(commit: &cc_common::backend::Commit) -> Vec<u8> {
         .collect();
 
     let mut extra_headers = Vec::new();
+
+    if commit.conflict_labels.len() > 1 {
+        let mut joined = commit.conflict_labels.join("\n");
+        joined.push('\n');
+        extra_headers.push(("jj:conflict-labels".into(), joined.into()));
+    }
+
+    if commit.root_tree_id.len() > 1 {
+        let trees_hex: Vec<String> = commit
+            .root_tree_id
+            .iter()
+            .map(|id| encode_forward_hex(id))
+            .collect();
+        extra_headers.push(("jj:trees".into(), trees_hex.join(" ").into()));
+    }
+
     if !commit.change_id.is_empty() {
-        use std::fmt::Write;
-        // multiply by 2 since 1 byte is 2 hex string characters
-        let mut hex_str = String::with_capacity(commit.change_id.len() * 2);
-        for b in commit.change_id.iter().rev() {
-            let _ = write!(hex_str, "{:02x}", b);
+        let rev_hex = encode_reverse_hex(&commit.change_id);
+        extra_headers.push(("change-id".into(), rev_hex.into()));
+    }
+
+    if let Some(secure_sig) = &commit.secure_sig {
+        if !secure_sig.sig.is_empty() {
+            extra_headers.push(("gpgsig".into(), secure_sig.sig.clone().into()));
         }
-        extra_headers.push(("change-id".into(), hex_str.into()));
     }
 
     let gix_commit = gix::objs::Commit {
@@ -222,4 +269,43 @@ pub fn hash_view(view: &cc_common::op_store::View) -> Vec<u8> {
 
     let hash = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, &buf);
     hash.as_bytes()[..cc_common::VIEW_ID_LENGTH].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_reverse_hex_matches_jj_alphabet() {
+        assert_eq!(
+            encode_reverse_hex(b"\x01\x23\x45\x67\x89\xab\xcd\xef"),
+            "zyxwvutsrqponmlk"
+        );
+    }
+
+    #[test]
+    fn test_compute_git_commit_hash_with_secure_sig_and_change_id() {
+        let mut commit = cc_common::backend::Commit {
+            commit_id: vec![],
+            change_id: b"\x01\x23\x45\x67\x89\xab\xcd\xef\x01\x23\x45\x67\x89\xab\xcd\xef".to_vec(),
+            parent_commit_ids: vec![],
+            root_tree_id: vec![cc_common::EMPTY_TREE_ID_BYTES.to_vec()],
+            description: "test commit\n".to_string(),
+            author: None,
+            committer: None,
+            predecessors: vec![],
+            conflict_labels: vec![],
+            secure_sig: None,
+        };
+        let hash_unsigned = compute_git_commit_hash(&commit);
+        assert_eq!(hash_unsigned.len(), 20);
+
+        commit.secure_sig = Some(cc_common::backend::SecureSig {
+            data: b"unsigned payload".to_vec(),
+            sig: b"-----BEGIN PGP SIGNATURE-----\nfake-sig\n-----END PGP SIGNATURE-----\n".to_vec(),
+        });
+        let hash_signed = compute_git_commit_hash(&commit);
+        assert_eq!(hash_signed.len(), 20);
+        assert_ne!(hash_unsigned, hash_signed);
+    }
 }

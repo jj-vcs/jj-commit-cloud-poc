@@ -50,7 +50,10 @@ pub fn commit_to_proto(commit: &Commit) -> pb::Commit {
             .map(|id| id.to_bytes().to_vec())
             .collect(),
         conflict_labels: commit.conflict_labels.as_slice().to_owned(),
-        secure_sig: commit.secure_sig.as_ref().map(|s| s.sig.clone()),
+        secure_sig: commit.secure_sig.as_ref().map(|s| pb::SecureSig {
+            data: s.data.clone(),
+            sig: s.sig.clone(),
+        }),
     }
 }
 
@@ -86,7 +89,10 @@ pub fn commit_from_proto(proto_commit: pb::Commit) -> Commit {
         author,
         committer,
         conflict_labels,
-        secure_sig: None,
+        secure_sig: proto_commit.secure_sig.map(|s| SecureSig {
+            data: s.data,
+            sig: s.sig,
+        }),
     }
 }
 
