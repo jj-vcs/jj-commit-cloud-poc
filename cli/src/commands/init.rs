@@ -1,4 +1,5 @@
 use cc_lib::cc_backend::CommitCloudBackend;
+use cc_lib::cc_index_store::CommitCloudIndexStore;
 use cc_lib::cc_op_heads_store::CommitCloudOpHeadsStore;
 use cc_lib::cc_op_store::CommitCloudOpStore;
 use clap::Parser;
@@ -18,6 +19,14 @@ pub struct CcInitArgs {
     /// Remote gRPC server URL (e.g. http://localhost:8080)
     #[arg(long)]
     pub server: String,
+
+    /// Project ID (owns shared commit/tree/file storage)
+    #[arg(long)]
+    pub project_id: String,
+
+    /// Optional Repository ID (owns operation log; generates a new UUID if omitted)
+    #[arg(long)]
+    pub repo_id: Option<String>,
 
     //TODO: Add server side guard for repository creation with --create
     /// Explicitly create a new remote repository if it does not exist yet
@@ -46,6 +55,8 @@ pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
         let backend = CommitCloudBackend::init(
             store_path,
             &args.server,
+            &args.project_id,
+            args.repo_id.as_deref(),
         )
         .map_err(BackendInitError)?;
         Ok(Box::new(backend) as Box<dyn jj_lib::backend::Backend>)
@@ -66,6 +77,11 @@ pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
             Ok(Box::new(op_heads_store) as Box<dyn jj_lib::op_heads_store::OpHeadsStore>)
         };
 
+    let index_store_initializer = |_settings: &UserSettings, store_path: &Path| {
+        let index_store = CommitCloudIndexStore::init(store_path).map_err(BackendInitError)?;
+        Ok(Box::new(index_store) as Box<dyn jj_lib::index::IndexStore>)
+    };
+
     // Delegate workspace creation to Jujutsu workspace engine
     Workspace::init_with_factories(
         &user_settings,
@@ -74,7 +90,7 @@ pub async fn cmd_cc_init(args: &CcInitArgs) -> Result<(), CommandError> {
         signer,
         &op_store_initializer,
         &op_heads_store_initializer,
-        ReadonlyRepo::default_index_store_initializer(),
+        &index_store_initializer,
         ReadonlyRepo::default_submodule_store_initializer(),
         &*default_working_copy_factory(),
         WorkspaceName::DEFAULT.to_owned(),

@@ -1,7 +1,9 @@
 use crate::cc_backend::CommitCloudBackend;
+use crate::cc_index_store::CommitCloudIndexStore;
 use crate::cc_op_heads_store::CommitCloudOpHeadsStore;
 use crate::cc_op_store::CommitCloudOpStore;
 use jj_lib::backend::{Backend, BackendLoadError};
+use jj_lib::index::IndexStore;
 use jj_lib::op_heads_store::OpHeadsStore;
 use jj_lib::op_store::OpStore;
 use jj_lib::repo::StoreFactories;
@@ -35,6 +37,15 @@ impl StoreFactoriesExt for StoreFactories {
                 let op_heads_store = CommitCloudOpHeadsStore::load(store_path)
                     .map_err(|e| BackendLoadError(e.into()))?;
                 Ok(Box::new(op_heads_store) as Box<dyn OpHeadsStore>)
+            }),
+        );
+
+        self.add_index_store(
+            "commit_cloud",
+            Box::new(|_settings, store_path| {
+                let index_store = CommitCloudIndexStore::load(store_path)
+                    .map_err(|e| BackendLoadError(e.into()))?;
+                Ok(Box::new(index_store) as Box<dyn IndexStore>)
             }),
         );
     }

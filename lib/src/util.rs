@@ -4,6 +4,7 @@ use std::path::Path;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommitCloudConfig {
     pub server_url: String,
+    pub project_id: String,
     pub repo_id: String,
 }
 

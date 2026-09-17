@@ -18,7 +18,7 @@ use crate::util::{run_async, CommitCloudConfig};
 #[derive(Debug)]
 pub struct CommitCloudBackend {
     server_url: String,
-    repo_id: String,
+    project_id: String,
     root_commit_id: CommitId,
     root_change_id: ChangeId,
     empty_tree_id: TreeId,
@@ -34,31 +34,38 @@ impl CommitCloudBackend {
     pub fn init(
         store_path: &Path,
         server_url: &str,
+        project_id: &str,
+        explicit_repo_id: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let root_commit_id = CommitId::from_bytes(&cc_common::ROOT_COMMIT_ID_BYTES);
         let root_change_id = ChangeId::from_bytes(&cc_common::ROOT_CHANGE_ID_BYTES);
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
 
         let server_url_cloned = server_url.to_string();
-        let repo_id = run_async(move || async move {
+        let project_id_cloned = project_id.to_string();
+        let repo_id_opt = explicit_repo_id.map(|s| s.to_string());
+        let (project_id, repo_id) = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url_cloned).await?;
             let register_repo_response = client.register_repository(tonic::Request::new(cc_common::backend::RegisterRepositoryRequest {
+                project_id: project_id_cloned,
+                repo_id: repo_id_opt,
                 name: None,
             })).await?.into_inner();
-            Ok(register_repo_response.repo_id)
+            Ok((register_repo_response.project_id, register_repo_response.repo_id))
         })?;
 
         // Write local config toml
         let config_path = store_path.join("config.toml");
         let config = CommitCloudConfig {
             server_url: server_url.to_string(),
-            repo_id: repo_id.clone(),
+            project_id: project_id.clone(),
+            repo_id,
         };
         fs::write(&config_path, toml::to_string_pretty(&config)?)?;
 
         Ok(Self {
             server_url: server_url.to_string(),
-            repo_id,
+            project_id,
             root_commit_id,
             root_change_id,
             empty_tree_id,
@@ -72,7 +79,7 @@ impl CommitCloudBackend {
         let empty_tree_id = TreeId::from_hex(cc_common::EMPTY_TREE_ID_HEX);
         Ok(Self {
             server_url: config.server_url,
-            repo_id: config.repo_id,
+            project_id: config.project_id,
             root_commit_id,
             root_change_id,
             empty_tree_id,
@@ -119,14 +126,14 @@ impl Backend for CommitCloudBackend {
         id: &FileId,
     ) -> BackendResult<Pin<Box<dyn futures::AsyncRead + Send>>> {
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
         let file_id_bytes = id.to_bytes().to_vec();
         let file_id_hex = id.hex();
 
         let content = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.read_file(tonic::Request::new(cc_common::backend::ReadFileRequest {
-                repo_id,
+                project_id,
                 file_id: file_id_bytes,
             })).await;
 
@@ -170,12 +177,12 @@ impl Backend for CommitCloudBackend {
             .map_err(|e| BackendError::Other(e.into()))?;
 
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
 
         let file_id_bytes = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.write_file(tonic::Request::new(cc_common::backend::WriteFileRequest {
-                repo_id,
+                project_id,
                 content: buffer,
             })).await?;
             Ok(res.into_inner().file_id)
@@ -210,7 +217,7 @@ impl Backend for CommitCloudBackend {
         }
 
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
         let tree_id_bytes = id.to_bytes().to_vec();
         let tree_id_hex = id.hex();
         let path_str = path.as_internal_file_string().to_string();
@@ -218,7 +225,7 @@ impl Backend for CommitCloudBackend {
         let proto_entries = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.read_tree(tonic::Request::new(cc_common::backend::ReadTreeRequest {
-                repo_id,
+                project_id,
                 tree_id: tree_id_bytes,
                 path: path_str,
             })).await;
@@ -258,13 +265,13 @@ impl Backend for CommitCloudBackend {
         let proto_entries = proto_entries?;
 
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
         let path_str = path.as_internal_file_string().to_string();
 
         let tree_id_bytes = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.write_tree(tonic::Request::new(cc_common::backend::WriteTreeRequest {
-                repo_id,
+                project_id,
                 path: path_str,
                 entries: proto_entries,
             })).await?;
@@ -283,14 +290,14 @@ impl Backend for CommitCloudBackend {
         }
 
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
         let commit_id_bytes = id.to_bytes().to_vec();
         let commit_id_hex = id.hex();
 
         let proto_commit = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.read_commit(tonic::Request::new(cc_common::backend::ReadCommitRequest {
-                repo_id,
+                project_id,
                 commit_id: commit_id_bytes,
             })).await;
 
@@ -323,12 +330,12 @@ impl Backend for CommitCloudBackend {
     ) -> BackendResult<(CommitId, Commit)> {
         let proto_commit = commit_to_proto(&commit);
         let server_url = self.server_url.clone();
-        let repo_id = self.repo_id.clone();
+        let project_id = self.project_id.clone();
 
         let returned_id_bytes = run_async(move || async move {
             let mut client = cc_common::backend::backend_service_client::BackendServiceClient::connect(server_url).await?;
             let res = client.write_commit(tonic::Request::new(cc_common::backend::WriteCommitRequest {
-                repo_id,
+                project_id,
                 commit: Some(proto_commit),
             })).await?;
             Ok(res.into_inner().commit_id)
