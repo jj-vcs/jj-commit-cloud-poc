@@ -10,12 +10,16 @@ erDiagram
     repos ||--o{ op_heads : "repo_id"
     repos ||--o{ operations : "repo_id"
     repos ||--o{ views : "repo_id"
+    repos ||--o{ workspaces : "repo_id"
     op_heads ||--|| operations : "op_id"
     operations ||..|| views : "view_id"
     views ||..o{ commits : "head_ids"
     commits ||..|| trees : "root_tree"
     trees ||..o{ files : "file_id"
     trees ||..o{ symlinks : "symlink_id"
+    workspaces ||..|| commits : "commit_id"
+    workspaces ||..|| operations : "operation_id"
+    workspaces ||..|| trees : "tree_id"
 
     projects {
         string(max) project_id PK
@@ -76,5 +80,15 @@ erDiagram
         bytes(max) view_id PK
         bytes(max) data
         timestamp created_at
+    }
+
+    workspaces {
+        string(max) repo_id PK, FK
+        string(max) user PK
+        string(max) workspace_name PK
+        bytes(max) commit_id FK
+        bytes(max) operation_id FK
+        bytes(max) tree_id FK
+        timestamp updated_at
     }
 ```
