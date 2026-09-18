@@ -27,3 +27,7 @@ The server defines an async **Store** trait containing all database storage func
 
 * **As of main branch**: [database_schema_main.md](./database_schema_main.md)
 * **As of current branch**: [database_schema.md](./database_schema.md)
+
+## Workflow
+
+* [workflow.md](./workflow.md)

@@ -25,11 +25,11 @@ sjjs --port 8080 --store-type spanner --spanner-db <SPANNER_LINK>
 
 ## 2. Initialize a Commit Cloud Workspace
 
-Create a workspace directory and initialize it against the running Commit Cloud server:
+Create a workspace directory and initialize it against the running Commit Cloud server *(with **--project-id** as of srachaba-8-project-id)*:
 
 ```bash
 mkdir -p /tmp/vfs_demo && cd /tmp/vfs_demo
-sjj cc init --server http://localhost:8080
+sjj cc init --server http://localhost:8080 --project-id <PROJECT_ID>
 ```
 
 ## 3. Sparse Checkout & VFS Integration *(as of srachaba-working-copy)*
