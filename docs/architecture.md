@@ -6,12 +6,12 @@
 
 | Crate | Dependencies | Description |
 | :--- | :--- | :--- |
-| **cc-lib** | **common**, **jj-lib** *(upstream)* | Implements Jujutsu's core storage traits (**Backend**, **OpStore**, **OpHeadsStore**, **WorkingCopy**) backed by gRPC calls to the Commit Cloud server. It also provides the **GitImporter** module for converting local Git object graphs and importing them into Commit Cloud. |
+| **cc-lib** | **common**, **jj-lib** *(upstream)* | Implements Jujutsu's core storage traits (**Backend**, **OpStore**, **OpHeadsStore**, **WorkingCopy**) backed by gRPC calls to the Commit Cloud server. It also provides the **GitImporter** module. |
 | **cli** | **cc-lib**, **jj-lib** *(upstream)*, **jj-cli** *(upstream)* | Builds the custom **jj** binary that registers the Commit Cloud storage factories with **jj-cli**. It also adds custom subcommands (**jj cc init** and **jj cc import-git**) for initializing remote-backed workspaces and importing Git repositories. |
-| **cc-server** | **common**, **jj-lib** *(upstream)* | Hosts the remote gRPC services (**BackendService**, **OpStoreService**, and **WorkspaceService**) along with server-side operation head reconciliation and Git-compatible SHA-1 hashing. It abstracts persistence behind the async **Store** trait with implementations for SQLite (**SqliteStore**) and Google Cloud Spanner (**SpannerStore**). |
-| **testutils** | None *(compiles **cc-server** and **daemon** in build.rs)* | Provides the integration test harness (**TestServer** and **TestEnv**) for spawning isolated Commit Cloud servers and running CLI commands in temporary directories. Its build script automatically builds the server binary so integration tests always run against the latest compiled executable. |
-| **daemon** *(as of srachaba-daemon)* | **common** | Runs a local background proxy listening on a Unix Domain Socket to eliminate repeated TCP/TLS handshake overhead on every **jj** CLI command. It forwards client RPCs over a single persistent HTTP/2 connection to the remote server. |
-| **common** | **jj-lib** *(upstream)* | Contains the Protocol Buffer definitions and compiles the Tonic gRPC client and server stubs. It also implements the bidirectional type conversions between **jj-lib** data structures and their protobuf wire representations. |
+| **cc-server** | **common**, **jj-lib** *(upstream)* | Implements the gRPC service handlers and connects to the backend storage layer. Is the "commit cloud". |
+| **testutils** | None *(compiles **cc-server** and **daemon** in build.rs)* | Provides the integration test harness for spawning isolated Commit Cloud servers and running CLI commands in temporary directories.|
+| **daemon** *(as of srachaba-daemon)* | **common** | Runs a local background proxy listening on a Unix Domain Socket to eliminate network connection startup overhead. It forwards client RPCs over a persistent connection to the remote server. |
+| **common** | **jj-lib** *(upstream)* | Contains the Protbuf definitions, helper functions, and shared constants. |
 
 ## Client
 
